@@ -278,6 +278,12 @@ class OutputAnalyzer {
                 pulse.durationSeconds,
                 100 * pulse.peakPower);
 
+        if (!pulse.isReliable()) {
+            currentValue = currentValue
+                    + activity.getString(R.string.row_separator)
+                    + activity.getString(R.string.low_signal_quality_warning);
+        }
+
         sendMessage(MainActivity.MESSAGE_UPDATE_REALTIME, currentValue);
 
         StringBuilder returnValueSb = new StringBuilder();

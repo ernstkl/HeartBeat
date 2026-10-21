@@ -17,6 +17,12 @@ class PulseEstimator {
     static final double MAX_BPM = 180;
     static final double STEP_BPM = 0.2;
 
+    /**
+     * Below this normalized peak power the estimate is not trusted. Good measurements so far had
+     * 0.38 - 0.77, one with the finger misplaced at the start 0.05.
+     */
+    static final double MIN_RELIABLE_PEAK_POWER = 0.2;
+
     /** Fewer samples than this are not considered a usable measurement. */
     static final int MIN_SAMPLES = 20;
 
@@ -35,6 +41,11 @@ class PulseEstimator {
             this.bpm = bpm;
             this.peakPower = peakPower;
             this.durationSeconds = durationSeconds;
+        }
+
+        /** Whether the pulse stands out clearly enough from the rest of the signal. */
+        boolean isReliable() {
+            return peakPower >= MIN_RELIABLE_PEAK_POWER;
         }
     }
 

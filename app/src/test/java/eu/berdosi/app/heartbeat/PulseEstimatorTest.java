@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Random;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
@@ -30,6 +31,7 @@ public class PulseEstimatorTest {
         assertEquals(57.8, result.bpm, 1e-6);
         assertEquals(0.6091, result.peakPower, 1e-3);
         assertEquals(10.9, result.durationSeconds, 1e-6);
+        assertTrue(result.isReliable());
     }
 
     /**
@@ -45,6 +47,7 @@ public class PulseEstimatorTest {
         assertEquals(56.8, result.bpm, 1e-6);
         assertEquals(0.766, result.peakPower, 1e-3);
         assertEquals(11.057, result.durationSeconds, 1e-6);
+        assertTrue(result.isReliable());
     }
 
     /**
@@ -58,6 +61,7 @@ public class PulseEstimatorTest {
         assertNotNull(result);
         assertEquals(56.2, result.bpm, 1e-6);
         assertEquals(0.517, result.peakPower, 1e-3);
+        assertTrue(result.isReliable());
     }
 
     /**
@@ -72,6 +76,7 @@ public class PulseEstimatorTest {
         assertNotNull(result);
         assertEquals(54.6, result.bpm, 1e-6);
         assertEquals(0.380, result.peakPower, 1e-3);
+        assertTrue(result.isReliable());
     }
 
     /**
@@ -86,6 +91,7 @@ public class PulseEstimatorTest {
         assertNotNull(result);
         assertEquals(32.6, result.bpm, 1e-6);
         assertTrue(result.peakPower < 0.1);
+        assertFalse(result.isReliable());
     }
 
     /** Reads "timestamp in ms,value" lines from a test resource and runs the estimator. */
