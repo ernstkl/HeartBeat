@@ -14,6 +14,10 @@ class MeasureStore {
      *
      * This value may need to be experimented with - it is better on the class level than putting it
      * into local scope
+     *
+     * TODO EJK smoothing entfernen
+     * TODO EJK date vielleicht eher bei Bildaufnahme festlegen, als beim Speichern der Zahl
+     
      */
     @SuppressWarnings("FieldCanBeLocal")
     private final int rollingAverageSize = 4;

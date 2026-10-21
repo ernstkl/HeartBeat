@@ -105,3 +105,5 @@ lint/tmp/
 # Android Profiling
 *.hprof
 # END https://raw.githubusercontent.com/github/gitignore/master/Android.gitignore
+# editor backups
+*~

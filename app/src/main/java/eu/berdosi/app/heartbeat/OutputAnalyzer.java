@@ -138,6 +138,11 @@ class OutputAnalyzer {
                         detectedValleys - 1,
                         1f * (valleys.get(valleys.size() - 1) - valleys.get(0)) / 1000f);
 
+                // TODO ejk obigen Code ersetzen / stdvalues auswerten. Da stehen die timestamps und die Werte drin. Siehe unten beim Anzeige-Code.
+                // algo: https://github.com/scipy/scipy/blob/main/scipy/signal/_spectral.py
+                // pass die normierung??
+                // am besten (später mal) auch obigen Code, der detectValley() aufruft und vorläufige Werte ausgibt, stillegen, und stattdessen einen Warte-Countdown ausgeben
+
                 sendMessage(MainActivity.MESSAGE_UPDATE_REALTIME, currentValue);
 
                 StringBuilder returnValueSb = new StringBuilder();
