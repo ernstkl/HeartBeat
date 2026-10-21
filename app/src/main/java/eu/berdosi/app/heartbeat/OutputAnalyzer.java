@@ -2,6 +2,7 @@ package eu.berdosi.app.heartbeat;
 
 import android.app.Activity;
 import android.graphics.Bitmap;
+import android.graphics.SurfaceTexture;
 import android.os.CountDownTimer;
 import android.os.Handler;
 import android.os.Message;
@@ -10,8 +11,11 @@ import android.view.TextureView;
 import android.view.View;
 
 import java.text.SimpleDateFormat;
+import java.util.Date;
 import java.util.Locale;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 class OutputAnalyzer {
     private final MainActivity activity;
@@ -30,6 +34,12 @@ class OutputAnalyzer {
     private final CopyOnWriteArrayList<Long> valleys = new CopyOnWriteArrayList<>();
 
     private CountDownTimer timer;
+
+    private final ExecutorService sampler = Executors.newSingleThreadExecutor();
+
+    private long lastFrameTimestampNs = 0;
+    private long firstFrameTimestampNs = 0;
+    private long firstFrameWallClockMs = 0;
 
     private final Handler mainHandler;
 
@@ -57,6 +67,22 @@ class OutputAnalyzer {
         }
     }
 
+    /**
+     * Wall clock time of a camera frame. The camera timestamp is exact relative to other frames,
+     * but its time base varies between devices, so it is anchored to the wall clock at the first frame.
+     */
+    private Date frameTimestamp(long frameTimestampNs) {
+        if (frameTimestampNs == 0) {
+            // timestamp not available, fall back to the time of grabbing the frame
+            return new Date();
+        }
+        if (firstFrameTimestampNs == 0) {
+            firstFrameTimestampNs = frameTimestampNs;
+            firstFrameWallClockMs = System.currentTimeMillis();
+        }
+        return new Date(firstFrameWallClockMs + (frameTimestampNs - firstFrameTimestampNs) / 1_000_000);
+    }
+
     void measurePulse(TextureView textureView, CameraService cameraService) {
 
         // 20 times a second, get the amount of red on the picture.
@@ -73,13 +99,26 @@ class OutputAnalyzer {
                 // skip the first measurements, which are broken by exposure metering
                 if (clipLength > (++ticksPassed * measurementInterval)) return;
 
-                Thread thread = new Thread(() -> {
-                    Bitmap currentBitmap = textureView.getBitmap();
-                    int pixelCount = textureView.getWidth() * textureView.getHeight();
+                // Grab the frame and its capture time together, here on the UI thread, where the
+                // TextureView updates its image - so the timestamp belongs to exactly this frame.
+                SurfaceTexture surfaceTexture = textureView.getSurfaceTexture();
+                if (surfaceTexture == null) return;
+                long frameTimestampNs = surfaceTexture.getTimestamp();
+                // the camera has not delivered a new frame since the last tick: don't count it twice
+                if (frameTimestampNs != 0 && frameTimestampNs == lastFrameTimestampNs) return;
+                lastFrameTimestampNs = frameTimestampNs;
+                Bitmap currentBitmap = textureView.getBitmap();
+                if (currentBitmap == null) return;
+                Date timestamp = frameTimestamp(frameTimestampNs);
+
+                // a single worker thread keeps the measurements in frame order
+                if (sampler.isShutdown()) return;
+                sampler.execute(() -> {
+                    int pixelCount = currentBitmap.getWidth() * currentBitmap.getHeight();
                     int measurement = 0;
                     int[] pixels = new int[pixelCount];
 
-                    currentBitmap.getPixels(pixels, 0, textureView.getWidth(), 0, 0, textureView.getWidth(), textureView.getHeight());
+                    currentBitmap.getPixels(pixels, 0, currentBitmap.getWidth(), 0, 0, currentBitmap.getWidth(), currentBitmap.getHeight());
 
                     // extract the red component
                     // https://developer.android.com/reference/android/graphics/Color.html#decoding
@@ -89,7 +128,7 @@ class OutputAnalyzer {
                     // max int is 2^31 (2147483647) , so width and height can be at most 2^11,
                     // as 2^8 * 2^11 * 2^11 = 2^30, just below the limit
 
-                    store.add(measurement);
+                    store.add(measurement, timestamp);
 
                     if (detectValley()) {
                         detectedValleys = detectedValleys + 1;
@@ -112,11 +151,12 @@ class OutputAnalyzer {
                     Thread chartDrawerThread = new Thread(() -> chartDrawer.draw(store.getStdValues()));
                     chartDrawerThread.start();
                 });
-                thread.start();
             }
 
             @Override
             public void onFinish() {
+                // frames already grabbed are still summed up; nothing new is accepted
+                sampler.shutdown();
                 CopyOnWriteArrayList<Measurement<Float>> stdValues = store.getStdValues();
 
                 PulseEstimator.Result pulse = PulseEstimator.estimate(stdValues);
@@ -217,6 +257,7 @@ class OutputAnalyzer {
         if (timer != null) {
             timer.cancel();
         }
+        sampler.shutdownNow();
     }
 
     void sendMessage(int what, Object message) {

@@ -16,14 +16,13 @@ class MeasureStore {
      * into local scope
      *
      * TODO EJK smoothing entfernen
-     * TODO EJK date vielleicht eher bei Bildaufnahme festlegen, als beim Speichern der Zahl
      
      */
     @SuppressWarnings("FieldCanBeLocal")
     private final int rollingAverageSize = 4;
 
-    void add(int measurement) {
-        Measurement<Integer> measurementWithDate = new Measurement<>(new Date(), measurement);
+    void add(int measurement, Date timestamp) {
+        Measurement<Integer> measurementWithDate = new Measurement<>(timestamp, measurement);
 
         measurements.add(measurementWithDate);
         if (measurement < minimum) minimum = measurement;
