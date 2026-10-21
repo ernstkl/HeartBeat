@@ -24,6 +24,8 @@
     <string name="dateFormat">yyyy-MM-dd\'T\'HH:mm:ssZZZZZ</string>
     <string name="dateFormatGranular">yyyy-MM-dd\'T\'HH:mm:ss.SSSZZZZZ</string>
     <string name="camera_not_found">Camera not available.</string>
+    <string name="pulse_output_template">Pulse: %1$2.1f (%2$2.1f seconds, signal quality %3$.0f%%)</string>
+    <string name="valley_counting_label">Valley counting: </string>
     <plurals name="measurement_output_template">
         <item quantity="zero">Pulse: %2.1f (%d cycle in %2.1f seconds)</item>
         <item quantity="one">Pulse: %2.1f (%d cycle in %2.1f seconds)</item>

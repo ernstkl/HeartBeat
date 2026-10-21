@@ -119,34 +119,44 @@ class OutputAnalyzer {
             public void onFinish() {
                 CopyOnWriteArrayList<Measurement<Float>> stdValues = store.getStdValues();
 
-                // clip the interval to the first till the last one - on this interval, there were detectedValleys - 1 periods
+                PulseEstimator.Result pulse = PulseEstimator.estimate(stdValues);
 
-                // If the camera only provided a static image, there are no valleys in the signal.
-                // A camera not available error is shown, which is the most likely cause.
-                if (valleys.size() == 0) {
+                // If the camera only provided a static image, the signal is constant and no pulse
+                // can be estimated. A camera not available error is shown, which is the most likely cause.
+                if (pulse == null) {
                     mainHandler.sendMessage(Message.obtain(
                             mainHandler,
                             MainActivity.MESSAGE_CAMERA_NOT_AVAILABLE,
-                            "No valleys detected - there may be an issue when accessing the camera."));
+                            "No usable signal - there may be an issue when accessing the camera."));
                     return;
                 }
 
                 String currentValue = String.format(
                         Locale.getDefault(),
-                        activity.getResources().getQuantityString(R.plurals.measurement_output_template, detectedValleys - 1),
-                        60f * (detectedValleys - 1) / (Math.max(1, (valleys.get(valleys.size() - 1) - valleys.get(0)) / 1000f)),
-                        detectedValleys - 1,
-                        1f * (valleys.get(valleys.size() - 1) - valleys.get(0)) / 1000f);
-
-                // TODO ejk obigen Code ersetzen / stdvalues auswerten. Da stehen die timestamps und die Werte drin. Siehe unten beim Anzeige-Code.
-                // algo: https://github.com/scipy/scipy/blob/main/scipy/signal/_spectral.py
-                // pass die normierung??
-                // am besten (später mal) auch obigen Code, der detectValley() aufruft und vorläufige Werte ausgibt, stillegen, und stattdessen einen Warte-Countdown ausgeben
+                        activity.getString(R.string.pulse_output_template),
+                        pulse.bpm,
+                        pulse.durationSeconds,
+                        100 * pulse.peakPower);
 
                 sendMessage(MainActivity.MESSAGE_UPDATE_REALTIME, currentValue);
 
                 StringBuilder returnValueSb = new StringBuilder();
                 returnValueSb.append(currentValue);
+                returnValueSb.append(activity.getString(R.string.row_separator));
+
+                // the original valley counting result, kept for comparison
+                // clip the interval to the first till the last one - on this interval, there were detectedValleys - 1 periods
+                returnValueSb.append(activity.getString(R.string.valley_counting_label));
+                if (valleys.size() > 0) {
+                    returnValueSb.append(String.format(
+                            Locale.getDefault(),
+                            activity.getResources().getQuantityString(R.plurals.measurement_output_template, detectedValleys - 1),
+                            60f * (detectedValleys - 1) / (Math.max(1, (valleys.get(valleys.size() - 1) - valleys.get(0)) / 1000f)),
+                            detectedValleys - 1,
+                            1f * (valleys.get(valleys.size() - 1) - valleys.get(0)) / 1000f));
+                } else {
+                    returnValueSb.append("-");
+                }
                 returnValueSb.append(activity.getString(R.string.row_separator));
 
                 // look for "drops" of 0.15 - 0.75 in the value
