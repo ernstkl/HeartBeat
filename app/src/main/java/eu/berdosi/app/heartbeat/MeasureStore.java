@@ -8,19 +8,6 @@ class MeasureStore {
     private int minimum = 2147483647;
     private int maximum = -2147483648;
 
-    /**
-     * The latest N measurements are always averaged in order to smooth the values before it is
-     * analyzed.
-     *
-     * This value may need to be experimented with - it is better on the class level than putting it
-     * into local scope
-     *
-     * TODO EJK smoothing entfernen
-     
-     */
-    @SuppressWarnings("FieldCanBeLocal")
-    private final int rollingAverageSize = 4;
-
     void add(int measurement, Date timestamp) {
         Measurement<Integer> measurementWithDate = new Measurement<>(timestamp, measurement);
 
@@ -32,16 +19,13 @@ class MeasureStore {
     CopyOnWriteArrayList<Measurement<Float>> getStdValues() {
         CopyOnWriteArrayList<Measurement<Float>> stdValues = new CopyOnWriteArrayList<>();
 
-        for (int i = 0; i < measurements.size(); i++) {
-            int sum = 0;
-            for (int rollingAverageCounter = 0; rollingAverageCounter < rollingAverageSize; rollingAverageCounter++) {
-                sum += measurements.get(Math.max(0, i - rollingAverageCounter)).measurement;
-            }
-
+        // values scaled to 0..1, no smoothing: PulseEstimator works on the raw signal
+        for (Measurement<Integer> measurement : measurements) {
             Measurement<Float> stdValue =
                     new Measurement<>(
-                            measurements.get(i).timestamp,
-                            ((float)sum / rollingAverageSize - minimum ) / (maximum - minimum));
+                            measurement.timestamp,
+                            // subtract as int: a float cannot hold the large red sums exactly
+                            (float) (measurement.measurement - minimum) / (maximum - minimum));
             stdValues.add(stdValue);
         }
 
