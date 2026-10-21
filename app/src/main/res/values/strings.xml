@@ -31,6 +31,7 @@
     <string name="status_no_finger">No finger detected on the camera.</string>
     <string name="color_at_start_template">Color at start (mean red, green, blue): %1$.0f, %2$.0f, %3$.0f</string>
     <string name="low_signal_quality_warning">Signal quality too low - the result is unreliable. Please measure again and keep your finger still.</string>
+    <string name="exposure_template">Camera exposure at start: %1$s; at end: %2$s</string>
     <string name="valley_counting_label">"Valley counting: "</string>
     <plurals name="measurement_output_template">
         <item quantity="zero">Pulse: %2.1f (%d cycle in %2.1f seconds)</item>

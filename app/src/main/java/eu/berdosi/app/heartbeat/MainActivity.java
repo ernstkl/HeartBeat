@@ -111,7 +111,7 @@ public class MainActivity extends Activity implements ActivityCompat.OnRequestPe
             ((Toolbar) findViewById(R.id.toolbar)).getMenu().getItem(MENU_INDEX_NEW_MEASUREMENT).setVisible(false);
 
             cameraService.start(previewSurface);
-            analyzer.measurePulse(cameraTextureView, cameraService);
+            analyzer.measurePulse(cameraService);
         }
     }
 
@@ -203,7 +203,7 @@ public class MainActivity extends Activity implements ActivityCompat.OnRequestPe
             // - TextureView isn't quite ready at the first onResume.
             Surface previewSurface = new Surface(previewSurfaceTexture);
             cameraService.start(previewSurface);
-            analyzer.measurePulse(cameraTextureView, cameraService);
+            analyzer.measurePulse(cameraService);
         }
     }
 

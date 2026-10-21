@@ -1,8 +1,5 @@
 package eu.berdosi.app.heartbeat;
 
-import android.graphics.Bitmap;
-import android.graphics.SurfaceTexture;
-import android.os.CountDownTimer;
 import android.os.Handler;
 import android.os.Message;
 import android.util.Log;
@@ -12,8 +9,6 @@ import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 class OutputAnalyzer {
     private final MainActivity activity;
@@ -22,11 +17,12 @@ class OutputAnalyzer {
 
     private MeasureStore store;
 
-    private final int measurementInterval = 45;
     // skip the first frames after starting the camera, which are broken by exposure metering
     private final long cameraWarmUpMs = 3500;
     // the finger has to be on the camera this long before measuring, until the image has settled
     private final long fingerSettleMs = 1500;
+    // after locking the exposure, frames already in the camera pipeline may still change
+    private final long exposureLockSettleMs = 500;
     // length of the measured signal
     private final long measuringMs = 11500;
     // give up if no finger is detected within this time
@@ -34,7 +30,8 @@ class OutputAnalyzer {
 
     /*
      * A finger on the camera, lit by the flash, gives a bright red image with little green.
-     * Mean channel values are 0..255. These thresholds are first guesses, see the "finger" log.
+     * Mean channel values are 0..255 (computed from the YUV means, so they can leave that range).
+     * Checked on a Nokia X30, see the "finger" log and TODO.md.
      */
     private static final float FINGER_MIN_RED = 100;
     private static final float FINGER_MAX_GREEN_TO_RED = 0.5f;
@@ -43,21 +40,20 @@ class OutputAnalyzer {
 
     private final CopyOnWriteArrayList<Long> valleys = new CopyOnWriteArrayList<>();
 
-    private CountDownTimer timer;
+    private CameraService cameraService;
 
-    private final ExecutorService sampler = Executors.newSingleThreadExecutor();
-
-    private long lastFrameTimestampNs = 0;
     private long firstFrameTimestampNs = 0;
     private long firstFrameWallClockMs = 0;
 
-    // state of the measurement, only used on the sampler thread
-    private enum State { WAITING_FOR_FINGER, SETTLING, MEASURING, FINISHED }
+    // state of the measurement, changed on the camera frame thread (and by timeout / stop)
+    private enum State { WAITING_FOR_FINGER, SETTLING, LOCKING_EXPOSURE, MEASURING, FINISHED }
     private State state = null;
     private long cameraStartNs = 0;
     private long fingerSinceNs = 0;
+    private long lockingSinceNs = 0;
     private long measuringSinceNs = 0;
     private float[] colorAtStart;
+    private String exposureAtStart;
     private int frameCount = 0;
 
     private final Handler mainHandler;
@@ -70,13 +66,13 @@ class OutputAnalyzer {
 
     private boolean detectValley() {
         final int valleyDetectionWindowSize = 13;
-        CopyOnWriteArrayList<Measurement<Integer>> subList = store.getLastStdValues(valleyDetectionWindowSize);
+        CopyOnWriteArrayList<Measurement<Float>> subList = store.getLastStdValues(valleyDetectionWindowSize);
         if (subList.size() < valleyDetectionWindowSize) {
             return false;
         } else {
-            Integer referenceValue = subList.get((int) Math.ceil(valleyDetectionWindowSize / 2f)).measurement;
+            Float referenceValue = subList.get((int) Math.ceil(valleyDetectionWindowSize / 2f)).measurement;
 
-            for (Measurement<Integer> measurement : subList) {
+            for (Measurement<Float> measurement : subList) {
                 if (measurement.measurement < referenceValue) return false;
             }
 
@@ -102,59 +98,37 @@ class OutputAnalyzer {
         return meanRed >= FINGER_MIN_RED && meanGreen <= FINGER_MAX_GREEN_TO_RED * meanRed;
     }
 
-    void measurePulse(TextureView textureView, CameraService cameraService) {
+    void measurePulse(CameraService cameraService) {
 
-        // about 20 times a second, get the amount of red on the picture.
-        // wait for a finger on the camera, then record the signal and estimate the pulse.
+        // wait for a finger on the camera, then record the amount of red of every camera frame
+        // and estimate the pulse.
 
+        this.cameraService = cameraService;
         store = new MeasureStore();
 
         detectedValleys = 0;
 
-        timer = new CountDownTimer(maxWaitMs + measuringMs, measurementInterval) {
-
-            @Override
-            public void onTick(long millisUntilFinished) {
-                // Grab the frame and its capture time together, here on the UI thread, where the
-                // TextureView updates its image - so the timestamp belongs to exactly this frame.
-                SurfaceTexture surfaceTexture = textureView.getSurfaceTexture();
-                if (surfaceTexture == null) return;
-                long frameTimestampNs = surfaceTexture.getTimestamp();
-                // the camera has not delivered a new frame since the last tick: don't count it twice
-                if (frameTimestampNs != 0 && frameTimestampNs == lastFrameTimestampNs) return;
-                lastFrameTimestampNs = frameTimestampNs;
-                Bitmap currentBitmap = textureView.getBitmap();
-                if (currentBitmap == null) return;
-                // timestamp not available: fall back to the time of grabbing the frame
-                long timeNs = frameTimestampNs != 0 ? frameTimestampNs : System.nanoTime();
-
-                // a single worker thread keeps the measurements in frame order
-                if (sampler.isShutdown()) return;
-                sampler.execute(() -> processFrame(currentBitmap, timeNs, cameraService));
-            }
-
-            @Override
-            public void onFinish() {
-                // only reached if the measurement could not complete in time
-                sampler.execute(() -> {
-                    if (state == State.FINISHED) return;
-                    state = State.FINISHED;
-                    mainHandler.post(() -> {
-                        sampler.shutdown();
-                        sendMessage(MainActivity.MESSAGE_UPDATE_REALTIME, activity.getString(R.string.status_no_finger));
-                        sendMessage(MainActivity.MESSAGE_UPDATE_FINAL, activity.getString(R.string.status_no_finger));
-                        cameraService.stop();
-                    });
-                });
-            }
-        };
+        cameraService.setFrameListener(this::processFrame);
+        mainHandler.postDelayed(timeout, maxWaitMs + measuringMs);
 
         activity.setViewState(MainActivity.VIEW_STATE.MEASUREMENT);
-        timer.start();
     }
 
-    /** Runs on the sampler thread for every new camera frame. */
-    private void processFrame(Bitmap bitmap, long timeNs, CameraService cameraService) {
+    private final Runnable timeout = this::onTimeout;
+
+    /** Only runs if the measurement could not complete in time. */
+    private void onTimeout() {
+        synchronized (this) {
+            if (state == State.FINISHED) return;
+            state = State.FINISHED;
+        }
+        sendMessage(MainActivity.MESSAGE_UPDATE_REALTIME, activity.getString(R.string.status_no_finger));
+        sendMessage(MainActivity.MESSAGE_UPDATE_FINAL, activity.getString(R.string.status_no_finger));
+        cameraService.stop();
+    }
+
+    /** Runs on the camera frame thread for every camera frame. */
+    private synchronized void processFrame(long timeNs, float meanRed, float meanGreen, float meanBlue) {
         if (state == State.FINISHED) return;
         if (state == null) {
             state = State.WAITING_FOR_FINGER;
@@ -162,35 +136,17 @@ class OutputAnalyzer {
             sendMessage(MainActivity.MESSAGE_UPDATE_REALTIME, activity.getString(R.string.status_place_finger));
         }
 
-        int pixelCount = bitmap.getWidth() * bitmap.getHeight();
-        int red = 0, green = 0, blue = 0;
-        int[] pixels = new int[pixelCount];
-
-        bitmap.getPixels(pixels, 0, bitmap.getWidth(), 0, 0, bitmap.getWidth(), bitmap.getHeight());
-
-        // extract the color components
-        // https://developer.android.com/reference/android/graphics/Color.html#decoding
-        for (int pixelIndex = 0; pixelIndex < pixelCount; pixelIndex++) {
-            red += (pixels[pixelIndex] >> 16) & 0xff;
-            green += (pixels[pixelIndex] >> 8) & 0xff;
-            blue += pixels[pixelIndex] & 0xff;
-        }
-        // max int is 2^31 (2147483647) , so width and height can be at most 2^11,
-        // as 2^8 * 2^11 * 2^11 = 2^30, just below the limit
-
-        float meanRed = (float) red / pixelCount;
-        float meanGreen = (float) green / pixelCount;
-        float meanBlue = (float) blue / pixelCount;
         boolean fingerOnCamera = isFingerOnCamera(meanRed, meanGreen);
 
         if (frameCount++ % 10 == 0) {
-            Log.d("finger", String.format(Locale.ROOT, "state %s, mean red %.0f, green %.0f, blue %.0f, finger %b",
-                    state, meanRed, meanGreen, meanBlue, fingerOnCamera));
+            Log.d("finger", String.format(Locale.ROOT, "state %s, mean red %.0f, green %.0f, blue %.0f, finger %b, exposure %s",
+                    state, meanRed, meanGreen, meanBlue, fingerOnCamera, cameraService.describeExposure()));
         }
 
         if (!fingerOnCamera) {
             if (state != State.WAITING_FOR_FINGER) {
-                // finger removed or moved: start over
+                // finger removed or moved: start over, letting the camera adjust its exposure again
+                cameraService.setExposureLocked(false);
                 state = State.WAITING_FOR_FINGER;
                 store = new MeasureStore();
                 valleys.clear();
@@ -211,13 +167,24 @@ class OutputAnalyzer {
                     || (timeNs - cameraStartNs) / 1_000_000 < cameraWarmUpMs) {
                 return;
             }
+            // the exposure has adapted to the finger: keep it fixed from now on, so that the
+            // camera does not readjust the brightness during the measurement
+            cameraService.setExposureLocked(true);
+            state = State.LOCKING_EXPOSURE;
+            lockingSinceNs = timeNs;
+            return;
+        }
+
+        if (state == State.LOCKING_EXPOSURE) {
+            if ((timeNs - lockingSinceNs) / 1_000_000 < exposureLockSettleMs) return;
             state = State.MEASURING;
             measuringSinceNs = timeNs;
             colorAtStart = new float[]{meanRed, meanGreen, meanBlue};
+            exposureAtStart = cameraService.describeExposure();
             sendMessage(MainActivity.MESSAGE_UPDATE_REALTIME, activity.getString(R.string.status_measuring));
         }
 
-        store.add(red, frameTimestamp(timeNs));
+        store.add(meanRed, frameTimestamp(timeNs));
         float measuringSeconds = (timeNs - measuringSinceNs) / 1e9f;
 
         if (detectValley()) {
@@ -237,25 +204,28 @@ class OutputAnalyzer {
             sendMessage(MainActivity.MESSAGE_UPDATE_REALTIME, currentValue);
         }
 
-        // draw the chart on a separate thread.
+        // the chart can be drawn from this thread, too
         CopyOnWriteArrayList<Measurement<Float>> chartValues = store.getStdValues();
         if (chartValues.size() > 1) {
-            Thread chartDrawerThread = new Thread(() -> chartDrawer.draw(chartValues));
-            chartDrawerThread.start();
+            chartDrawer.draw(chartValues);
         }
 
         if ((timeNs - measuringSinceNs) / 1_000_000 >= measuringMs) {
             state = State.FINISHED;
             MeasureStore finishedStore = store;
             float[] finishedColor = colorAtStart;
-            mainHandler.post(() -> finishMeasurement(finishedStore, finishedColor, cameraService));
+            String exposure = String.format(
+                    Locale.getDefault(),
+                    activity.getString(R.string.exposure_template),
+                    exposureAtStart,
+                    cameraService.describeExposure());
+            mainHandler.post(() -> finishMeasurement(finishedStore, finishedColor, exposure));
         }
     }
 
     /** Runs on the main thread once the signal has been recorded. */
-    private void finishMeasurement(MeasureStore store, float[] colorAtStart, CameraService cameraService) {
-        timer.cancel();
-        sampler.shutdown();
+    private void finishMeasurement(MeasureStore store, float[] colorAtStart, String exposure) {
+        mainHandler.removeCallbacks(timeout);
 
         CopyOnWriteArrayList<Measurement<Float>> stdValues = store.getStdValues();
 
@@ -310,6 +280,8 @@ class OutputAnalyzer {
                 activity.getString(R.string.color_at_start_template),
                 colorAtStart[0], colorAtStart[1], colorAtStart[2]));
         returnValueSb.append(activity.getString(R.string.row_separator));
+        returnValueSb.append(exposure);
+        returnValueSb.append(activity.getString(R.string.row_separator));
 
         returnValueSb.append(activity.getString(R.string.raw_values));
         returnValueSb.append(activity.getString(R.string.row_separator));
@@ -343,10 +315,11 @@ class OutputAnalyzer {
     }
 
     void stop() {
-        if (timer != null) {
-            timer.cancel();
+        mainHandler.removeCallbacks(timeout);
+        synchronized (this) {
+            state = State.FINISHED;
         }
-        sampler.shutdownNow();
+        if (cameraService != null) cameraService.setFrameListener(null);
     }
 
     void sendMessage(int what, Object message) {
