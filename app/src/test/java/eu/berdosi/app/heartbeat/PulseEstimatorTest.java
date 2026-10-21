@@ -80,6 +80,20 @@ public class PulseEstimatorTest {
     }
 
     /**
+     * 2026-10-22 00:24: first recording via ImageReader with locked exposure (40 ms, ISO 1722),
+     * every frame at 25 fps. App and scipy: 56.8 bpm, peak power 0.559. (Valley counting: 56.8.)
+     */
+    @Test
+    public void recordedMeasurementWithExposureLock() throws Exception {
+        PulseEstimator.Result result = estimateFromCsv("log-2026-10-22-0024.csv");
+
+        assertNotNull(result);
+        assertEquals(56.8, result.bpm, 1e-6);
+        assertEquals(0.559, result.peakPower, 1e-3);
+        assertTrue(result.isReliable());
+    }
+
+    /**
      * 2026-10-21 23:48: finger not placed properly at the start. The jump in the first ~1.5 s
      * dominates, the estimate is wrong (scipy agrees: 32.6 bpm), but the low peak power shows it.
      * Without the first 1.5 s it would be 57.0 bpm - hence the finger detection in OutputAnalyzer.
