@@ -25,6 +25,11 @@
     <string name="dateFormatGranular">yyyy-MM-dd\'T\'HH:mm:ss.SSSZZZZZ</string>
     <string name="camera_not_found">Camera not available.</string>
     <string name="pulse_output_template">Pulse: %1$2.1f (%2$2.1f seconds, signal quality %3$.0f%%)</string>
+    <string name="status_place_finger">Place your finger on the camera, covering the flash as well.</string>
+    <string name="status_hold_still">Finger detected - hold still…</string>
+    <string name="status_measuring">Measuring…</string>
+    <string name="status_no_finger">No finger detected on the camera.</string>
+    <string name="color_at_start_template">Color at start (mean red, green, blue): %1$.0f, %2$.0f, %3$.0f</string>
     <string name="valley_counting_label">"Valley counting: "</string>
     <plurals name="measurement_output_template">
         <item quantity="zero">Pulse: %2.1f (%d cycle in %2.1f seconds)</item>
