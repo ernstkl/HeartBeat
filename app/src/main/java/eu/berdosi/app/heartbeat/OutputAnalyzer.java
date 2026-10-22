@@ -27,6 +27,10 @@ class OutputAnalyzer {
     private final long measuringMs = 11500;
     // give up if no finger is detected within this time
     private final long maxWaitMs = 60000;
+    // live estimate during the measurement: from this much data on, then once per interval.
+    // On the recordings, 3 s of data are within about 2 bpm of the final result.
+    private final long liveEstimateStartMs = 3000;
+    private final long liveEstimateIntervalMs = 1000;
 
     /*
      * A finger on the camera, lit by the flash, gives a bright red image with little green.
@@ -48,6 +52,7 @@ class OutputAnalyzer {
     private long fingerSinceNs = 0;
     private long lockingSinceNs = 0;
     private long measuringSinceNs = 0;
+    private long liveEstimateNs = 0;
     private float[] colorAtStart;
     private String exposureAtStart;
     private int frameCount = 0;
@@ -153,6 +158,7 @@ class OutputAnalyzer {
             if ((timeNs - lockingSinceNs) / 1_000_000 < exposureLockSettleMs) return;
             state = State.MEASURING;
             measuringSinceNs = timeNs;
+            liveEstimateNs = 0;
             colorAtStart = new float[]{meanRed, meanGreen, meanBlue};
             exposureAtStart = cameraService.describeExposure();
             sendMessage(MainActivity.MESSAGE_UPDATE_REALTIME, activity.getString(R.string.status_measuring));
@@ -166,7 +172,14 @@ class OutputAnalyzer {
             chartDrawer.draw(chartValues);
         }
 
-        if ((timeNs - measuringSinceNs) / 1_000_000 >= measuringMs) {
+        long measuredMs = (timeNs - measuringSinceNs) / 1_000_000;
+        if (measuredMs >= liveEstimateStartMs && measuredMs < measuringMs
+                && (timeNs - liveEstimateNs) / 1_000_000 >= liveEstimateIntervalMs) {
+            liveEstimateNs = timeNs;
+            showLiveEstimate(chartValues, measuredMs);
+        }
+
+        if (measuredMs >= measuringMs) {
             state = State.FINISHED;
             MeasureStore finishedStore = store;
             float[] finishedColor = colorAtStart;
@@ -177,6 +190,21 @@ class OutputAnalyzer {
                     cameraService.describeExposure());
             mainHandler.post(() -> finishMeasurement(finishedStore, finishedColor, exposure));
         }
+    }
+
+    /** The pulse from the data so far, rounded - it still changes by a beat or two. */
+    private void showLiveEstimate(CopyOnWriteArrayList<Measurement<Float>> values, long measuredMs) {
+        long startNs = System.nanoTime();
+        PulseEstimator.Result pulse = PulseEstimator.estimate(values);
+        Log.d("finger", String.format(Locale.ROOT, "live estimate %s after %d ms, took %.1f ms",
+                pulse == null ? "-" : String.format(Locale.ROOT, "%.1f bpm, quality %.2f", pulse.bpm, pulse.peakPower),
+                measuredMs, (System.nanoTime() - startNs) / 1e6));
+        String status = (pulse != null && pulse.isReliable())
+                ? String.format(Locale.getDefault(), activity.getString(R.string.status_live_estimate),
+                        pulse.bpm, measuredMs / 1000f, measuringMs / 1000f)
+                : String.format(Locale.getDefault(), activity.getString(R.string.status_no_clear_pulse),
+                        measuredMs / 1000f, measuringMs / 1000f);
+        sendMessage(MainActivity.MESSAGE_UPDATE_REALTIME, status);
     }
 
     /** Runs on the main thread once the signal has been recorded. */

@@ -27,6 +27,8 @@
     <string name="status_place_finger">Place your finger on the camera, covering the flash as well.</string>
     <string name="status_hold_still">Finger detected - hold still…</string>
     <string name="status_measuring">Measuring…</string>
+    <string name="status_live_estimate">Measuring… pulse about %1$.0f (%2$.0f of %3$.0f seconds)</string>
+    <string name="status_no_clear_pulse">Measuring… no clear pulse yet (%1$.0f of %2$.0f seconds)</string>
     <string name="status_no_finger">No finger detected on the camera.</string>
     <string name="color_at_start_template">Color at start (mean red, green, blue): %1$.0f, %2$.0f, %3$.0f</string>
     <string name="low_signal_quality_warning">Signal quality too low - the result is unreliable. Please measure again and keep your finger still.</string>
