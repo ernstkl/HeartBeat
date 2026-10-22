@@ -1,12 +1,18 @@
 apply plugin: 'com.android.application'
 
 android {
+    namespace 'eu.berdosi.app.heartbeat'
+    compileSdk 35
     defaultConfig {
         applicationId "eu.berdosi.app.heartbeat"
         minSdkVersion 21
-        targetSdkVersion 33
+        targetSdkVersion 35
         versionCode 5
         versionName "1.4.0"
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
     }
     buildTypes {
         release {
@@ -15,7 +21,6 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
-    compileSdk 34
 }
 
 dependencies {

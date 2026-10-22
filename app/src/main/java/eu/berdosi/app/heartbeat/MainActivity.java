@@ -11,6 +11,9 @@ import android.os.Bundle;
 import androidx.annotation.NonNull;
 import androidx.appcompat.widget.Toolbar;
 import androidx.core.app.ActivityCompat;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
 
 import android.os.Handler;
 import android.os.Looper;
@@ -127,10 +130,27 @@ public class MainActivity extends Activity implements ActivityCompat.OnRequestPe
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+        keepClearOfSystemBars();
 
         ActivityCompat.requestPermissions(this,
                 new String[]{Manifest.permission.CAMERA},
                 REQUEST_CODE_CAMERA);
+    }
+
+    /**
+     * From Android 15 on, the app is drawn behind the status and navigation bars (edge-to-edge).
+     * The app bar is extended under the status bar, everything else is kept clear of the bars.
+     * On older versions the insets are already taken care of by the system and are 0 here.
+     */
+    private void keepClearOfSystemBars() {
+        View appBar = findViewById(R.id.appBarLayout);
+        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.rootLayout), (root, windowInsets) -> {
+            Insets bars = windowInsets.getInsets(
+                    WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout());
+            root.setPadding(bars.left, 0, bars.right, bars.bottom);
+            appBar.setPadding(0, bars.top, 0, 0);
+            return WindowInsetsCompat.CONSUMED;
+        });
     }
 
     @Override
