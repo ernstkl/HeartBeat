@@ -8,7 +8,6 @@
         \nপরিমাপ করা শেষ হলে, তালিকা থেকে রপ্তানি বা আবার করা যাবে।
     </string>
     <string name="output_header_template">%s এ হৃদস্পন্দন</string>
-    <string name="output_detected_peaks_header">শনাক্তকৃত শীর্ষ:</string>
     <string name="send_output_to">ফলাফল পাঠাও:</string>
     <string name="separator">,</string>
     <string name="row_separator">\n</string>
@@ -21,9 +20,4 @@
     <string name="dateFormat">yyyy-MM-dd\'T\'HH:mm:ssZZZZZ</string>
     <string name="dateFormatGranular">yyyy-MM-dd\'T\'HH:mm:ss.SSSZZZZZ</string>
     <string name="camera_not_found">ক্যামেরা নেই।</string>
-    <plurals name="measurement_output_template">
-        <item quantity="zero">স্পন্দন: %2.1f (%2.1f সেকেন্ডে %d চক্র)</item>
-        <item quantity="one">স্পন্দন: %2.1f (%2.1f সেকেন্ডে %d চক্র)</item>
-        <item quantity="other">স্পন্দন: %2.1f (%2.1f সেকেন্ডে %d চক্র)</item>
-    </plurals>
 </resources>

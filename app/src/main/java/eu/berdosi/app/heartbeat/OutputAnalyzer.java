@@ -36,10 +36,6 @@ class OutputAnalyzer {
     private static final float FINGER_MIN_RED = 100;
     private static final float FINGER_MAX_GREEN_TO_RED = 0.5f;
 
-    private int detectedValleys = 0;
-
-    private final CopyOnWriteArrayList<Long> valleys = new CopyOnWriteArrayList<>();
-
     private CameraService cameraService;
 
     private long firstFrameTimestampNs = 0;
@@ -62,24 +58,6 @@ class OutputAnalyzer {
         this.activity = activity;
         this.chartDrawer = new ChartDrawer(graphTextureView);
         this.mainHandler = mainHandler;
-    }
-
-    private boolean detectValley() {
-        final int valleyDetectionWindowSize = 13;
-        CopyOnWriteArrayList<Measurement<Float>> subList = store.getLastStdValues(valleyDetectionWindowSize);
-        if (subList.size() < valleyDetectionWindowSize) {
-            return false;
-        } else {
-            Float referenceValue = subList.get((int) Math.ceil(valleyDetectionWindowSize / 2f)).measurement;
-
-            for (Measurement<Float> measurement : subList) {
-                if (measurement.measurement < referenceValue) return false;
-            }
-
-            // filter out consecutive measurements due to too high measurement rate
-            return (!subList.get((int) Math.ceil(valleyDetectionWindowSize / 2f)).measurement.equals(
-                    subList.get((int) Math.ceil(valleyDetectionWindowSize / 2f) - 1).measurement));
-        }
     }
 
     /**
@@ -105,8 +83,6 @@ class OutputAnalyzer {
 
         this.cameraService = cameraService;
         store = new MeasureStore();
-
-        detectedValleys = 0;
 
         cameraService.setFrameListener(this::processFrame);
         mainHandler.postDelayed(timeout, maxWaitMs + measuringMs);
@@ -149,8 +125,6 @@ class OutputAnalyzer {
                 cameraService.setExposureLocked(false);
                 state = State.WAITING_FOR_FINGER;
                 store = new MeasureStore();
-                valleys.clear();
-                detectedValleys = 0;
                 sendMessage(MainActivity.MESSAGE_UPDATE_REALTIME, activity.getString(R.string.status_place_finger));
             }
             return;
@@ -185,24 +159,6 @@ class OutputAnalyzer {
         }
 
         store.add(meanRed, frameTimestamp(timeNs));
-        float measuringSeconds = (timeNs - measuringSinceNs) / 1e9f;
-
-        if (detectValley()) {
-            detectedValleys = detectedValleys + 1;
-            valleys.add(store.getLastTimestamp().getTime());
-            // in 13 seconds (13000 milliseconds), I expect 15 valleys. that would be a pulse of 15 / 130000 * 60 * 1000 = 69
-
-            String currentValue = String.format(
-                    Locale.getDefault(),
-                    activity.getResources().getQuantityString(R.plurals.measurement_output_template, detectedValleys),
-                    (valleys.size() == 1)
-                            ? (60f * (detectedValleys) / (Math.max(1, measuringSeconds)))
-                            : (60f * (detectedValleys - 1) / (Math.max(1, (valleys.get(valleys.size() - 1) - valleys.get(0)) / 1000f))),
-                    detectedValleys,
-                    measuringSeconds);
-
-            sendMessage(MainActivity.MESSAGE_UPDATE_REALTIME, currentValue);
-        }
 
         // the chart can be drawn from this thread, too
         CopyOnWriteArrayList<Measurement<Float>> chartValues = store.getStdValues();
@@ -260,21 +216,6 @@ class OutputAnalyzer {
         returnValueSb.append(currentValue);
         returnValueSb.append(activity.getString(R.string.row_separator));
 
-        // the original valley counting result, kept for comparison
-        // clip the interval to the first till the last one - on this interval, there were detectedValleys - 1 periods
-        returnValueSb.append(activity.getString(R.string.valley_counting_label));
-        if (valleys.size() > 0) {
-            returnValueSb.append(String.format(
-                    Locale.getDefault(),
-                    activity.getResources().getQuantityString(R.plurals.measurement_output_template, detectedValleys - 1),
-                    60f * (detectedValleys - 1) / (Math.max(1, (valleys.get(valleys.size() - 1) - valleys.get(0)) / 1000f)),
-                    detectedValleys - 1,
-                    1f * (valleys.get(valleys.size() - 1) - valleys.get(0)) / 1000f));
-        } else {
-            returnValueSb.append("-");
-        }
-        returnValueSb.append(activity.getString(R.string.row_separator));
-
         returnValueSb.append(String.format(
                 Locale.getDefault(),
                 activity.getString(R.string.color_at_start_template),
@@ -297,15 +238,6 @@ class OutputAnalyzer {
             returnValueSb.append(timeStampString);
             returnValueSb.append(activity.getString(R.string.separator));
             returnValueSb.append(value.measurement);
-            returnValueSb.append(activity.getString(R.string.row_separator));
-        }
-
-        returnValueSb.append(activity.getString(R.string.output_detected_peaks_header));
-        returnValueSb.append(activity.getString(R.string.row_separator));
-
-        // add detected valleys location
-        for (long tick : valleys) {
-            returnValueSb.append(tick);
             returnValueSb.append(activity.getString(R.string.row_separator));
         }
 

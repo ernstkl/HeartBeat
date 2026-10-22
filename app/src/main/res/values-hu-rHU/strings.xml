@@ -11,7 +11,6 @@
         \nHa az eszközön több kamera is található, az ujjat úgy kell ráhelyezni,
         hogy a kis előnézeti képet teljesen eltakarja az ujj képe.</string>
     <string name="output_header_template">Pulzus értéke ekkor: %s</string>
-    <string name="output_detected_peaks_header">Észlelt hullámhegyek:</string>
     <string name="send_output_to">Adatok küldése ide:</string>
     <string name="export_details">Részletek küldése</string>
     <string name="export_result">Eredmény küldése</string>

@@ -11,7 +11,6 @@
         \nOnce the measurement is complete, it can be exported or repeated through the menu.
     </string>
     <string name="output_header_template">Heart rate on %s</string>
-    <string name="output_detected_peaks_header">Detected Peaks:</string>
     <string name="send_output_to">Send output to:</string>
     <string name="separator">,</string>
     <string name="row_separator">\n</string>
@@ -32,10 +31,4 @@
     <string name="color_at_start_template">Color at start (mean red, green, blue): %1$.0f, %2$.0f, %3$.0f</string>
     <string name="low_signal_quality_warning">Signal quality too low - the result is unreliable. Please measure again and keep your finger still.</string>
     <string name="exposure_template">Camera exposure at start: %1$s; at end: %2$s</string>
-    <string name="valley_counting_label">"Valley counting: "</string>
-    <plurals name="measurement_output_template">
-        <item quantity="zero">Pulse: %2.1f (%d cycle in %2.1f seconds)</item>
-        <item quantity="one">Pulse: %2.1f (%d cycle in %2.1f seconds)</item>
-        <item quantity="other">Pulse: %2.1f (%d cycles in %2.1f seconds)</item>
-    </plurals>
 </resources>

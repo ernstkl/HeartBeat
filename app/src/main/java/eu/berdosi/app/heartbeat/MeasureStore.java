@@ -30,17 +30,4 @@ class MeasureStore {
 
         return stdValues;
     }
-
-    @SuppressWarnings("SameParameterValue") // this parameter can be set at OutputAnalyzer
-    CopyOnWriteArrayList<Measurement<Float>> getLastStdValues(int count) {
-        if (count < measurements.size()) {
-            return  new CopyOnWriteArrayList<>(measurements.subList(measurements.size() - 1 - count, measurements.size() - 1));
-        } else {
-            return measurements;
-        }
-    }
-
-    Date getLastTimestamp() {
-        return measurements.get(measurements.size() - 1).timestamp;
-    }
 }
