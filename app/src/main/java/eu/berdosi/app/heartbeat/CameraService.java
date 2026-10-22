@@ -52,7 +52,8 @@ class CameraService {
     private final Handler handler;
     private CameraDevice cameraDevice;
     private CameraCaptureSession previewSession;
-    private ImageReader imageReader;
+    // written on the main thread, compared in camera callbacks
+    private volatile ImageReader imageReader;
     private HandlerThread frameThread;
     private Handler frameHandler;
     private boolean exposureLockAvailable;
@@ -115,12 +116,18 @@ class CameraService {
             frameThread.start();
             frameHandler = new Handler(frameThread.getLooper());
 
-            imageReader = ImageReader.newInstance(frameSize.getWidth(), frameSize.getHeight(), ImageFormat.YUV_420_888, 4);
-            imageReader.setOnImageAvailableListener(this::onImageAvailable, frameHandler);
+            final ImageReader reader = ImageReader.newInstance(frameSize.getWidth(), frameSize.getHeight(), ImageFormat.YUV_420_888, 4);
+            reader.setOnImageAvailableListener(this::onImageAvailable, frameHandler);
+            imageReader = reader;
 
             cameraManager.openCamera(cameraId, new CameraDevice.StateCallback() {
                 @Override
                 public void onOpened(@NonNull CameraDevice camera) {
+                    if (reader != imageReader) {
+                        // stopped while the camera was being opened
+                        camera.close();
+                        return;
+                    }
                     cameraDevice = camera;
 
                     CameraCaptureSession.StateCallback stateCallback = new CameraCaptureSession.StateCallback() {
@@ -130,14 +137,17 @@ class CameraService {
                             previewSession = session;
                             try {
 
-                                previewCaptureRequestBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
+                                // the camera and the reader of this session, not the fields: those are
+                                // already cleared if stop() was called while the session was set up
+                                previewCaptureRequestBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
                                 previewCaptureRequestBuilder.addTarget(previewSurface); // this is previewSurface
-                                previewCaptureRequestBuilder.addTarget(imageReader.getSurface());
+                                previewCaptureRequestBuilder.addTarget(reader.getSurface());
                                 previewCaptureRequestBuilder.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_TORCH);
 
                                 setRepeatingRequest();
 
-                            } catch (CameraAccessException | IllegalStateException e) {
+                            } catch (CameraAccessException | IllegalStateException | IllegalArgumentException e) {
+                                // also thrown when the camera was closed in the meantime
                                 if (e.getMessage() != null) {
                                     Log.println(Log.ERROR, "camera", e.getMessage());
                                 }
@@ -153,8 +163,8 @@ class CameraService {
                     try {
                         // deprecated in API 30, but changing it would bump minSdkVersion to 28.
                         //noinspection deprecation
-                        camera.createCaptureSession(Arrays.asList(previewSurface, imageReader.getSurface()), stateCallback, null); //1
-                    } catch (CameraAccessException e) {
+                        camera.createCaptureSession(Arrays.asList(previewSurface, reader.getSurface()), stateCallback, null); //1
+                    } catch (CameraAccessException | IllegalStateException | IllegalArgumentException e) {
                         if (e.getMessage() != null) {
                             Log.println(Log.ERROR, "camera", e.getMessage());
                         }
