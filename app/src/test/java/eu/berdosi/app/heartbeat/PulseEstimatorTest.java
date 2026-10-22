@@ -112,6 +112,22 @@ public class PulseEstimatorTest {
         assertFalse(result.isReliable());
     }
 
+    /**
+     * 2026-10-22 05:38: the exposure was locked while it was still adjusting (SEARCHING, 70 ms),
+     * the first 1.4 s are a brightness ramp over the whole value range. The pulse is right
+     * (sliding 5 s windows: 65-67 bpm, quality 0.56-0.79), but the ramp pulls the peak power down
+     * to the threshold; scipy agrees (66.8 bpm, 0.30). Without the first 1.5 s: 66.8 bpm, 0.64.
+     * Since then OutputAnalyzer waits for the exposure to converge and lock.
+     */
+    @Test
+    public void exposureRampAtStartLowersPeakPower() throws Exception {
+        PulseEstimator.Result result = estimateFromCsv("log-2026-10-22-0538.csv");
+
+        assertNotNull(result);
+        assertEquals(66.8, result.bpm, 1e-6);
+        assertEquals(0.30, result.peakPower, 0.01);
+    }
+
     /** Reads "timestamp in ms,value" lines from a test resource and runs the estimator. */
     private PulseEstimator.Result estimateFromCsv(String resourceName) throws Exception {
         List<Long> timestamps = new ArrayList<>();

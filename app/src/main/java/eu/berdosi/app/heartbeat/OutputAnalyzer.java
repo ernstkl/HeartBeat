@@ -1,5 +1,6 @@
 package eu.berdosi.app.heartbeat;
 
+import android.hardware.camera2.CaptureResult;
 import android.os.Handler;
 import android.os.Message;
 import android.util.Log;
@@ -21,7 +22,12 @@ class OutputAnalyzer {
     private final long cameraWarmUpMs = 3500;
     // the finger has to be on the camera this long before measuring, until the image has settled
     private final long fingerSettleMs = 1500;
-    // after locking the exposure, frames already in the camera pipeline may still change
+    // the auto exposure has to have settled before it is locked; phones that never report it
+    // settled are not waited for longer than this
+    private final long maxExposureConvergeWaitMs = 3000;
+    // locking takes a few frames; again a limit for phones that do not report it
+    private final long maxExposureLockWaitMs = 1500;
+    // once the camera reports the exposure locked, frames already in the pipeline may still change
     private final long exposureLockSettleMs = 500;
     // length of the measured signal
     private final long measuringMs = 11500;
@@ -50,7 +56,9 @@ class OutputAnalyzer {
     private State state = null;
     private long cameraStartNs = 0;
     private long fingerSinceNs = 0;
+    private long settledSinceNs = 0;
     private long lockingSinceNs = 0;
+    private long lockedSinceNs = 0;
     private long measuringSinceNs = 0;
     private long liveEstimateNs = 0;
     private float[] colorAtStart;
@@ -75,6 +83,14 @@ class OutputAnalyzer {
             firstFrameWallClockMs = System.currentTimeMillis();
         }
         return new Date(firstFrameWallClockMs + (frameTimestampNs - firstFrameTimestampNs) / 1_000_000);
+    }
+
+    /** Whether auto exposure has finished adjusting; also true if the camera does not report it. */
+    private static boolean isExposureConverged(int aeState) {
+        return aeState == CaptureResult.CONTROL_AE_STATE_CONVERGED
+                || aeState == CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED
+                || aeState == CaptureResult.CONTROL_AE_STATE_LOCKED
+                || aeState == -1;
     }
 
     static boolean isFingerOnCamera(float meanRed, float meanGreen) {
@@ -138,6 +154,7 @@ class OutputAnalyzer {
         if (state == State.WAITING_FOR_FINGER) {
             state = State.SETTLING;
             fingerSinceNs = timeNs;
+            settledSinceNs = 0;
             sendMessage(MainActivity.MESSAGE_UPDATE_REALTIME, activity.getString(R.string.status_hold_still));
         }
 
@@ -146,16 +163,35 @@ class OutputAnalyzer {
                     || (timeNs - cameraStartNs) / 1_000_000 < cameraWarmUpMs) {
                 return;
             }
-            // the exposure has adapted to the finger: keep it fixed from now on, so that the
-            // camera does not readjust the brightness during the measurement
+            // Wait until the exposure has adapted to the finger. Locking it while it is still
+            // changing gave a brightness ramp at the start of the signal (recording of 05:38).
+            if (settledSinceNs == 0) settledSinceNs = timeNs;
+            boolean converged = isExposureConverged(cameraService.getAeState());
+            if (!converged && (timeNs - settledSinceNs) / 1_000_000 < maxExposureConvergeWaitMs) return;
+            Log.d("finger", String.format(Locale.ROOT, "exposure %s after %d ms: %s",
+                    converged ? "converged" : "did not converge", (timeNs - settledSinceNs) / 1_000_000,
+                    cameraService.describeExposure()));
+            // keep it fixed from now on, so that the camera does not readjust the brightness
+            // during the measurement
             cameraService.setExposureLocked(true);
             state = State.LOCKING_EXPOSURE;
             lockingSinceNs = timeNs;
+            lockedSinceNs = 0;
             return;
         }
 
         if (state == State.LOCKING_EXPOSURE) {
-            if ((timeNs - lockingSinceNs) / 1_000_000 < exposureLockSettleMs) return;
+            if (lockedSinceNs == 0) {
+                boolean locked = !cameraService.isExposureLockAvailable()
+                        || cameraService.getAeState() == CaptureResult.CONTROL_AE_STATE_LOCKED
+                        || cameraService.getAeState() == -1;
+                if (!locked && (timeNs - lockingSinceNs) / 1_000_000 < maxExposureLockWaitMs) return;
+                Log.d("finger", String.format(Locale.ROOT, "exposure %s after %d ms: %s",
+                        locked ? "locked" : "not reported locked", (timeNs - lockingSinceNs) / 1_000_000,
+                        cameraService.describeExposure()));
+                lockedSinceNs = timeNs;
+            }
+            if ((timeNs - lockedSinceNs) / 1_000_000 < exposureLockSettleMs) return;
             state = State.MEASURING;
             measuringSinceNs = timeNs;
             liveEstimateNs = 0;

@@ -195,6 +195,14 @@ class CameraService {
         }
     }
 
+    /**
+     * Auto exposure state from the latest capture result, one of CaptureResult.CONTROL_AE_STATE_*,
+     * or -1 if the camera does not report it.
+     */
+    int getAeState() {
+        return aeState;
+    }
+
     boolean isExposureLockAvailable() {
         return exposureLockAvailable;
     }
