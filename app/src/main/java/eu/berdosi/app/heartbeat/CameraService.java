@@ -28,7 +28,9 @@ import androidx.annotation.NonNull;
 import androidx.core.app.ActivityCompat;
 
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 
@@ -38,16 +40,20 @@ class CameraService {
         /**
          * @param timestampNs sensor timestamp of the frame; exact relative to other frames, but
          *                    the time base differs between devices
+         * @param cameraId    the camera the frame comes from; after a camera switch, frames of the
+         *                    previous camera can still arrive for a moment
          * @param meanRed     mean color components, 0..255 nominally; computed from the YUV means
          *                    without clipping, so they can leave that range slightly
          */
-        void onFrame(long timestampNs, float meanRed, float meanGreen, float meanBlue);
+        void onFrame(String cameraId, long timestampNs, float meanRed, float meanGreen, float meanBlue);
     }
 
     // frames are only averaged, so a small image is enough
     private static final int FRAME_MIN_PIXELS = 320 * 240;
 
     private String cameraId;
+    private List<String> candidateCameraIds;
+    private Surface previewSurface;
     private final Activity activity;
     private final Handler handler;
     private CameraDevice cameraDevice;
@@ -76,18 +82,68 @@ class CameraService {
         frameListener = listener;
     }
 
+    /** Starts the first of the {@link #getCandidateCameraIds() candidate cameras}. */
     void start(Surface previewSurface) {
-
-        CameraManager cameraManager = (CameraManager) activity.getSystemService(Context.CAMERA_SERVICE);
-        try {
-            cameraId = Objects.requireNonNull(cameraManager).getCameraIdList()[0];
-        } catch (CameraAccessException | NullPointerException | ArrayIndexOutOfBoundsException e) {
-            Log.e("camera", "No access to camera", e);
+        this.previewSurface = previewSurface;
+        List<String> cameraIds = getCandidateCameraIds();
+        if (cameraIds.isEmpty()) {
             handler.sendMessage(Message.obtain(
                 handler,
                 MainActivity.MESSAGE_CAMERA_NOT_AVAILABLE,
                 "No access to camera...."));
+            return;
         }
+        open(cameraIds.get(0));
+    }
+
+    /** Closes the current camera and opens another one, with the same preview. Main thread only. */
+    void switchCamera(String newCameraId) {
+        // stopped in the meantime
+        if (previewSurface == null) return;
+        if (newCameraId.equals(cameraId)) return;
+        closeCamera();
+        open(newCameraId);
+    }
+
+    String getCameraId() {
+        return cameraId;
+    }
+
+    /**
+     * The cameras a finger can be measured with: those not facing the user, with a flash. The
+     * flash is needed to light the finger. If no camera qualifies, the first camera, as before.
+     */
+    List<String> getCandidateCameraIds() {
+        if (candidateCameraIds == null) candidateCameraIds = findCandidateCameraIds();
+        return candidateCameraIds;
+    }
+
+    private List<String> findCandidateCameraIds() {
+        List<String> cameraIds = new ArrayList<>();
+        CameraManager cameraManager = (CameraManager) activity.getSystemService(Context.CAMERA_SERVICE);
+        try {
+            String[] allCameraIds = Objects.requireNonNull(cameraManager).getCameraIdList();
+            for (String id : allCameraIds) {
+                CameraCharacteristics characteristics = cameraManager.getCameraCharacteristics(id);
+                Integer facing = characteristics.get(CameraCharacteristics.LENS_FACING);
+                Boolean flash = characteristics.get(CameraCharacteristics.FLASH_INFO_AVAILABLE);
+                Log.d("camera", "camera " + id + ": facing " + facing + ", flash " + flash
+                        + ", focal lengths " + Arrays.toString(characteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)));
+                if (facing != null && facing == CameraCharacteristics.LENS_FACING_FRONT) continue;
+                if (!Boolean.TRUE.equals(flash)) continue;
+                cameraIds.add(id);
+            }
+            if (cameraIds.isEmpty() && allCameraIds.length > 0) cameraIds.add(allCameraIds[0]);
+        } catch (CameraAccessException | NullPointerException e) {
+            Log.e("camera", "No access to camera", e);
+        }
+        Log.d("camera", "candidate cameras " + cameraIds);
+        return cameraIds;
+    }
+
+    private void open(String openedCameraId) {
+        cameraId = openedCameraId;
+        CameraManager cameraManager = (CameraManager) activity.getSystemService(Context.CAMERA_SERVICE);
 
         try {
 
@@ -100,11 +156,6 @@ class CameraService {
                 return;
             }
 
-            // message has been sent to MainActivity, this method can return.
-            if (cameraId == null) {
-                return;
-            };
-
             CameraCharacteristics characteristics = Objects.requireNonNull(cameraManager).getCameraCharacteristics(cameraId);
             exposureLockAvailable = Build.VERSION.SDK_INT < Build.VERSION_CODES.M
                     || Boolean.TRUE.equals(characteristics.get(CameraCharacteristics.CONTROL_AE_LOCK_AVAILABLE));
@@ -116,15 +167,16 @@ class CameraService {
             frameThread.start();
             frameHandler = new Handler(frameThread.getLooper());
 
+            final Surface surface = previewSurface;
             final ImageReader reader = ImageReader.newInstance(frameSize.getWidth(), frameSize.getHeight(), ImageFormat.YUV_420_888, 4);
-            reader.setOnImageAvailableListener(this::onImageAvailable, frameHandler);
+            reader.setOnImageAvailableListener(r -> onImageAvailable(r, openedCameraId), frameHandler);
             imageReader = reader;
 
             cameraManager.openCamera(cameraId, new CameraDevice.StateCallback() {
                 @Override
                 public void onOpened(@NonNull CameraDevice camera) {
                     if (reader != imageReader) {
-                        // stopped while the camera was being opened
+                        // stopped or switched to another camera while this one was being opened
                         camera.close();
                         return;
                     }
@@ -137,10 +189,10 @@ class CameraService {
                             previewSession = session;
                             try {
 
-                                // the camera and the reader of this session, not the fields: those are
+                                // the camera, reader and surface of this session, not the fields: those are
                                 // already cleared if stop() was called while the session was set up
                                 previewCaptureRequestBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
-                                previewCaptureRequestBuilder.addTarget(previewSurface); // this is previewSurface
+                                previewCaptureRequestBuilder.addTarget(surface);
                                 previewCaptureRequestBuilder.addTarget(reader.getSurface());
                                 previewCaptureRequestBuilder.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_TORCH);
 
@@ -163,7 +215,7 @@ class CameraService {
                     try {
                         // deprecated in API 30, but changing it would bump minSdkVersion to 28.
                         //noinspection deprecation
-                        camera.createCaptureSession(Arrays.asList(previewSurface, reader.getSurface()), stateCallback, null); //1
+                        camera.createCaptureSession(Arrays.asList(surface, reader.getSurface()), stateCallback, null); //1
                     } catch (CameraAccessException | IllegalStateException | IllegalArgumentException e) {
                         if (e.getMessage() != null) {
                             Log.println(Log.ERROR, "camera", e.getMessage());
@@ -262,7 +314,7 @@ class CameraService {
     }
 
     /** Runs on the frame thread for every camera frame. */
-    private void onImageAvailable(ImageReader reader) {
+    private void onImageAvailable(ImageReader reader, String frameCameraId) {
         Image image = reader.acquireNextImage();
         if (image == null) return;
         try {
@@ -282,7 +334,7 @@ class CameraService {
             float meanGreen = (float) (meanY - 0.344136 * (meanU - 128) - 0.714136 * (meanV - 128));
             float meanBlue = (float) (meanY + 1.772 * (meanU - 128));
 
-            listener.onFrame(image.getTimestamp(), meanRed, meanGreen, meanBlue);
+            listener.onFrame(frameCameraId, image.getTimestamp(), meanRed, meanGreen, meanBlue);
         } catch (IllegalStateException e) {
             // the camera was stopped while this frame was being read
             Log.d("camera", "frame dropped: " + e.getMessage());
@@ -307,6 +359,11 @@ class CameraService {
 
     void stop() {
         frameListener = null;
+        previewSurface = null;
+        closeCamera();
+    }
+
+    private void closeCamera() {
         try {
             if (cameraDevice != null) cameraDevice.close();
         } catch (Exception e) {
@@ -314,6 +371,10 @@ class CameraService {
         }
         cameraDevice = null;
         previewSession = null;
+        previewCaptureRequestBuilder = null;
+        aeState = -1;
+        exposureTimeNs = 0;
+        sensitivityIso = 0;
         if (imageReader != null) {
             imageReader.close();
             imageReader = null;

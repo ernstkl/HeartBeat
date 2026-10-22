@@ -30,5 +30,7 @@
     <string name="status_live_estimate">Measuring… pulse about %1$.0f (%2$.0f of %3$.0f seconds)</string>
     <string name="status_no_finger">No finger detected on the camera.</string>
     <string name="color_at_start_template">Color at start (mean red, green, blue): %1$.0f, %2$.0f, %3$.0f</string>
+    <string name="status_choosing_camera">Finger detected - hold still, choosing the camera…</string>
+    <string name="camera_template">Camera: %1$s (finger score per camera: %2$s)</string>
     <string name="exposure_template">Camera exposure at start: %1$s; at end: %2$s</string>
 </resources>

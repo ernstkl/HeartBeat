@@ -7,7 +7,9 @@ import android.util.Log;
 import android.view.TextureView;
 
 import java.text.SimpleDateFormat;
+import java.util.Arrays;
 import java.util.Date;
+import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -37,6 +39,9 @@ class OutputAnalyzer {
     // On the recordings, 3 s of data are within about 2 bpm of the final result.
     private final long liveEstimateStartMs = 3000;
     private final long liveEstimateIntervalMs = 1000;
+    // with several cameras: each one is looked at this long, after a pause for the exposure to adapt
+    private final long probeSettleMs = 1000;
+    private final long probeMs = 1000;
 
     /*
      * A finger on the camera, lit by the flash, gives a bright red image with little green.
@@ -52,7 +57,7 @@ class OutputAnalyzer {
     private long firstFrameWallClockMs = 0;
 
     // state of the measurement, changed on the camera frame thread (and by timeout / stop)
-    private enum State { WAITING_FOR_FINGER, SETTLING, LOCKING_EXPOSURE, MEASURING, FINISHED }
+    private enum State { CHOOSING_CAMERA, WAITING_FOR_FINGER, SETTLING, LOCKING_EXPOSURE, MEASURING, FINISHED }
     private State state = null;
     private long cameraStartNs = 0;
     private long fingerSinceNs = 0;
@@ -64,6 +69,23 @@ class OutputAnalyzer {
     private float[] colorAtStart;
     private String exposureAtStart;
     private int frameCount = 0;
+
+    /*
+     * Phones with several back cameras: while choosing, the cameras are opened in turn and the
+     * one with the clearest finger image is kept. Frames still arriving from the previous camera
+     * after a switch are ignored.
+     */
+    private List<String> cameraIds;
+    private String activeCameraId;
+    private int probedCamera;
+    private long probeStartNs;
+    private int probeFrames;
+    private int probeFingerFrames;
+    private double probeGreenToRedSum;
+    // finger score per camera, NaN = not probed since the finger was first seen
+    private float[] fingerScores;
+    private int probedSinceFinger;
+    private String fingerScoreSummary = "-";
 
     private final Handler mainHandler;
 
@@ -105,6 +127,16 @@ class OutputAnalyzer {
         this.cameraService = cameraService;
         store = new MeasureStore();
 
+        cameraIds = cameraService.getCandidateCameraIds();
+        activeCameraId = cameraService.getCameraId();
+        fingerScores = new float[cameraIds.size()];
+        Arrays.fill(fingerScores, Float.NaN);
+        if (cameraIds.size() > 1) {
+            state = State.CHOOSING_CAMERA;
+            probedCamera = Math.max(0, cameraIds.indexOf(activeCameraId));
+            sendMessage(MainActivity.MESSAGE_UPDATE_REALTIME, activity.getString(R.string.status_place_finger));
+        }
+
         cameraService.setFrameListener(this::processFrame);
         mainHandler.postDelayed(timeout, maxWaitMs + measuringMs);
 
@@ -125,19 +157,25 @@ class OutputAnalyzer {
     }
 
     /** Runs on the camera frame thread for every camera frame. */
-    private synchronized void processFrame(long timeNs, float meanRed, float meanGreen, float meanBlue) {
+    private synchronized void processFrame(String cameraId, long timeNs, float meanRed, float meanGreen, float meanBlue) {
         if (state == State.FINISHED) return;
+        if (!cameraId.equals(activeCameraId)) return;
+        if (cameraStartNs == 0) cameraStartNs = timeNs;
         if (state == null) {
             state = State.WAITING_FOR_FINGER;
-            cameraStartNs = timeNs;
             sendMessage(MainActivity.MESSAGE_UPDATE_REALTIME, activity.getString(R.string.status_place_finger));
         }
 
         boolean fingerOnCamera = isFingerOnCamera(meanRed, meanGreen);
 
         if (frameCount++ % 10 == 0) {
-            Log.d("finger", String.format(Locale.ROOT, "state %s, mean red %.0f, green %.0f, blue %.0f, finger %b, exposure %s",
-                    state, meanRed, meanGreen, meanBlue, fingerOnCamera, cameraService.describeExposure()));
+            Log.d("finger", String.format(Locale.ROOT, "camera %s, state %s, mean red %.0f, green %.0f, blue %.0f, finger %b, exposure %s",
+                    cameraId, state, meanRed, meanGreen, meanBlue, fingerOnCamera, cameraService.describeExposure()));
+        }
+
+        if (state == State.CHOOSING_CAMERA) {
+            probeCamera(timeNs, meanRed, meanGreen, fingerOnCamera);
+            return;
         }
 
         if (!fingerOnCamera) {
@@ -224,7 +262,12 @@ class OutputAnalyzer {
                     activity.getString(R.string.exposure_template),
                     exposureAtStart,
                     cameraService.describeExposure());
-            mainHandler.post(() -> finishMeasurement(finishedStore, finishedColor, exposure));
+            String camera = String.format(
+                    Locale.getDefault(),
+                    activity.getString(R.string.camera_template),
+                    cameraId,
+                    fingerScoreSummary);
+            mainHandler.post(() -> finishMeasurement(finishedStore, finishedColor, exposure, camera));
         }
     }
 
@@ -245,8 +288,86 @@ class OutputAnalyzer {
                 pulse.bpm, measuredMs / 1000f, measuringMs / 1000f));
     }
 
+    /**
+     * Looks at the current camera for a while, then moves on to the next one. Once all cameras
+     * have been looked at since the finger was first seen, the one with the best finger score is
+     * kept and the measurement starts as with a single camera.
+     */
+    private void probeCamera(long timeNs, float meanRed, float meanGreen, boolean fingerOnCamera) {
+        if (probeStartNs == 0) probeStartNs = timeNs;
+        long probingMs = (timeNs - probeStartNs) / 1_000_000;
+        if (probingMs < probeSettleMs) return;
+        probeFrames++;
+        if (fingerOnCamera) {
+            probeFingerFrames++;
+            probeGreenToRedSum += meanGreen / meanRed;
+        }
+        if (probingMs < probeSettleMs + probeMs) return;
+
+        // A finger on most frames, and then: the less green, the less ambient light gets past the
+        // finger, the clearer the finger image. 1 = no green at all.
+        float score = (probeFingerFrames * 2 > probeFrames)
+                ? (float) (1 - probeGreenToRedSum / probeFingerFrames)
+                : 0;
+        Log.d("finger", String.format(Locale.ROOT, "camera %s: finger on %d of %d frames, score %.3f, exposure %s",
+                activeCameraId, probeFingerFrames, probeFrames, score, cameraService.describeExposure()));
+
+        if (score > 0 && probedSinceFinger == 0) {
+            // finger seen for the first time: from now on, every camera gets a score
+            Arrays.fill(fingerScores, Float.NaN);
+            sendMessage(MainActivity.MESSAGE_UPDATE_REALTIME, activity.getString(R.string.status_choosing_camera));
+        }
+        if (score > 0 || probedSinceFinger > 0) {
+            fingerScores[probedCamera] = score;
+            probedSinceFinger++;
+        }
+
+        int nextCamera = (probedCamera + 1) % cameraIds.size();
+        if (probedSinceFinger == cameraIds.size()) {
+            int best = 0;
+            for (int i = 1; i < fingerScores.length; i++) {
+                if (fingerScores[i] > fingerScores[best]) best = i;
+            }
+            StringBuilder summary = new StringBuilder();
+            for (int i = 0; i < fingerScores.length; i++) {
+                if (i > 0) summary.append(", ");
+                summary.append(String.format(Locale.ROOT, "%s: %.3f", cameraIds.get(i), fingerScores[i]));
+            }
+            fingerScoreSummary = summary.toString();
+            Log.d("finger", "finger scores " + fingerScoreSummary);
+
+            if (fingerScores[best] > 0) {
+                state = State.WAITING_FOR_FINGER;
+                sendMessage(MainActivity.MESSAGE_UPDATE_REALTIME, activity.getString(R.string.status_hold_still));
+                if (best != probedCamera) switchCamera(best);
+                return;
+            }
+            // finger gone again: start over
+            probedSinceFinger = 0;
+            sendMessage(MainActivity.MESSAGE_UPDATE_REALTIME, activity.getString(R.string.status_place_finger));
+        }
+        switchCamera(nextCamera);
+    }
+
+    private void switchCamera(int index) {
+        probedCamera = index;
+        activeCameraId = cameraIds.get(index);
+        cameraStartNs = 0;
+        probeStartNs = 0;
+        probeFrames = 0;
+        probeFingerFrames = 0;
+        probeGreenToRedSum = 0;
+        String cameraId = activeCameraId;
+        mainHandler.post(() -> {
+            synchronized (this) {
+                if (state == State.FINISHED) return;
+            }
+            cameraService.switchCamera(cameraId);
+        });
+    }
+
     /** Runs on the main thread once the signal has been recorded. */
-    private void finishMeasurement(MeasureStore store, float[] colorAtStart, String exposure) {
+    private void finishMeasurement(MeasureStore store, float[] colorAtStart, String exposure, String camera) {
         mainHandler.removeCallbacks(timeout);
 
         CopyOnWriteArrayList<Measurement<Float>> stdValues = store.getStdValues();
@@ -282,6 +403,8 @@ class OutputAnalyzer {
                 colorAtStart[0], colorAtStart[1], colorAtStart[2]));
         returnValueSb.append(activity.getString(R.string.row_separator));
         returnValueSb.append(exposure);
+        returnValueSb.append(activity.getString(R.string.row_separator));
+        returnValueSb.append(camera);
         returnValueSb.append(activity.getString(R.string.row_separator));
 
         returnValueSb.append(activity.getString(R.string.raw_values));
