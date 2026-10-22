@@ -228,19 +228,21 @@ class OutputAnalyzer {
         }
     }
 
-    /** The pulse from the data so far, rounded - it still changes by a beat or two. */
+    /**
+     * The pulse from the data so far, rounded - it still changes by a beat or two. Whether it
+     * settles is the user's indication of a good measurement.
+     */
     private void showLiveEstimate(CopyOnWriteArrayList<Measurement<Float>> values, long measuredMs) {
         long startNs = System.nanoTime();
         PulseEstimator.Result pulse = PulseEstimator.estimate(values);
         Log.d("finger", String.format(Locale.ROOT, "live estimate %s after %d ms, took %.1f ms",
-                pulse == null ? "-" : String.format(Locale.ROOT, "%.1f bpm, quality %.2f", pulse.bpm, pulse.peakPower),
+                pulse == null ? "-" : String.format(Locale.ROOT, "%.1f bpm, peak power %.2f", pulse.bpm, pulse.peakPower),
                 measuredMs, (System.nanoTime() - startNs) / 1e6));
-        String status = (pulse != null && pulse.isReliable())
-                ? String.format(Locale.getDefault(), activity.getString(R.string.status_live_estimate),
-                        pulse.bpm, measuredMs / 1000f, measuringMs / 1000f)
-                : String.format(Locale.getDefault(), activity.getString(R.string.status_no_clear_pulse),
-                        measuredMs / 1000f, measuringMs / 1000f);
-        sendMessage(MainActivity.MESSAGE_UPDATE_REALTIME, status);
+        if (pulse == null) return;
+        sendMessage(MainActivity.MESSAGE_UPDATE_REALTIME, String.format(
+                Locale.getDefault(),
+                activity.getString(R.string.status_live_estimate),
+                pulse.bpm, measuredMs / 1000f, measuringMs / 1000f));
     }
 
     /** Runs on the main thread once the signal has been recorded. */
@@ -265,14 +267,8 @@ class OutputAnalyzer {
                 Locale.getDefault(),
                 activity.getString(R.string.pulse_output_template),
                 pulse.bpm,
-                pulse.durationSeconds,
-                100 * pulse.peakPower);
-
-        if (!pulse.isReliable()) {
-            currentValue = currentValue
-                    + activity.getString(R.string.row_separator)
-                    + activity.getString(R.string.low_signal_quality_warning);
-        }
+                pulse.durationSeconds);
+        Log.d("finger", String.format(Locale.ROOT, "result %.1f bpm, peak power %.2f", pulse.bpm, pulse.peakPower));
 
         sendMessage(MainActivity.MESSAGE_UPDATE_REALTIME, currentValue);
 

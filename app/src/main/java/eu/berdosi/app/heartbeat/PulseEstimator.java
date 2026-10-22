@@ -19,15 +19,6 @@ class PulseEstimator {
     static final double MAX_BPM = 180;
     static final double STEP_BPM = 0.2;
 
-    /**
-     * Below this normalized peak power the estimate is not trusted. Calibrated on the recordings
-     * of 2026-10-21/22 (after detrending): good measurements 0.57 - 0.81; a signal without pulse
-     * (values shuffled in time) 0.03 - 0.10, as was the take with the finger misplaced (0.03).
-     * 0.3 is three times the highest noise value. A real pulse wave is not a pure sine, so even
-     * a perfect measurement stays below about 0.9.
-     */
-    static final double MIN_RELIABLE_PEAK_POWER = 0.3;
-
     /** Fewer samples than this are not considered a usable measurement. */
     static final int MIN_SAMPLES = 20;
 
@@ -37,7 +28,9 @@ class PulseEstimator {
         /**
          * Normalized periodogram value at the peak, between 0 and 1: the fraction of the signal's
          * variance (after removing the trend) explained by a sine at the estimated heart rate.
-         * Higher means a clearer pulse.
+         * Not shown to the user: it also drops for a clear pulse when there is slow drift left
+         * (breathing, finger pressure) or the rate changes during the measurement, so it is not
+         * a usable quality measure as it is. Logged for working out a better one.
          */
         final double peakPower;
         /** Time span covered by the measurements, in seconds. */
@@ -47,11 +40,6 @@ class PulseEstimator {
             this.bpm = bpm;
             this.peakPower = peakPower;
             this.durationSeconds = durationSeconds;
-        }
-
-        /** Whether the pulse stands out clearly enough from the rest of the signal. */
-        boolean isReliable() {
-            return peakPower >= MIN_RELIABLE_PEAK_POWER;
         }
     }
 
