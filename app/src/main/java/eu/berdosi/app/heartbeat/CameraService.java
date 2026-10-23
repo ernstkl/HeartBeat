@@ -129,6 +129,7 @@ class CameraService {
                 Boolean flash = characteristics.get(CameraCharacteristics.FLASH_INFO_AVAILABLE);
                 Log.d("camera", "camera " + id + ": facing " + facing + ", flash " + flash
                         + ", focal lengths " + Arrays.toString(characteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)));
+                logPhysicalCameras(cameraManager, id, characteristics);
                 if (facing != null && facing == CameraCharacteristics.LENS_FACING_FRONT) continue;
                 if (!Boolean.TRUE.equals(flash)) continue;
                 cameraIds.add(id);
@@ -139,6 +140,33 @@ class CameraService {
         }
         Log.d("camera", "candidate cameras " + cameraIds);
         return cameraIds;
+    }
+
+    /**
+     * Logs the physical cameras behind a logical multi-camera (API 28+). Not used yet: on phones
+     * where the ultrawide etc. are only reachable this way, it shows whether choosing among them
+     * would be worth implementing.
+     */
+    private static void logPhysicalCameras(CameraManager cameraManager, String id, CameraCharacteristics characteristics) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return;
+        int[] capabilities = characteristics.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES);
+        boolean logical = false;
+        if (capabilities != null) {
+            for (int capability : capabilities) {
+                if (capability == CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_LOGICAL_MULTI_CAMERA) logical = true;
+            }
+        }
+        if (!logical) return;
+        for (String physicalId : characteristics.getPhysicalCameraIds()) {
+            try {
+                CameraCharacteristics physical = cameraManager.getCameraCharacteristics(physicalId);
+                Log.d("camera", "camera " + id + ": physical camera " + physicalId
+                        + ", flash " + physical.get(CameraCharacteristics.FLASH_INFO_AVAILABLE)
+                        + ", focal lengths " + Arrays.toString(physical.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)));
+            } catch (CameraAccessException | IllegalArgumentException e) {
+                Log.d("camera", "camera " + id + ": physical camera " + physicalId + ", no characteristics: " + e.getMessage());
+            }
+        }
     }
 
     private void open(String openedCameraId) {
