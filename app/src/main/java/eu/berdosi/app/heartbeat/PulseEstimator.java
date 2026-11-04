@@ -22,6 +22,17 @@ class PulseEstimator {
     /** Fewer samples than this are not considered a usable measurement. */
     static final int MIN_SAMPLES = 20;
 
+    /**
+     * Below this {@link Result#peakShare}, the full-length measurement shows no clear pulse.
+     * On the recordings: clear pulses 0.47-0.82, the bad take of 2026-10-21 23:48 0.08, the
+     * same signals shuffled in time (noise with the same values) at most 0.34. Only valid for
+     * the full measurement (about 11 s): in shorter windows the peak is wider than the band
+     * counted as the peak, and good signals score lower (0.28-0.32 after 3 s).
+     */
+    static final double MIN_PEAK_SHARE = 0.4;
+    /** Half the width of the band counted as the peak, and as each harmonic, in bpm. */
+    static final double PEAK_BAND_BPM = 3;
+
     static class Result {
         /** Estimated heart rate in beats per minute. */
         final double bpm;
@@ -33,13 +44,35 @@ class PulseEstimator {
          * a usable quality measure as it is. Logged for working out a better one.
          */
         final double peakPower;
+        /**
+         * Share of the periodogram (summed over the searched range) within
+         * {@link #PEAK_BAND_BPM} of the peak and its 2nd and 3rd harmonic. Unlike the peak power,
+         * the pulse wave's harmonics count for it, and slow drift below the range does not count
+         * against it.
+         */
+        final double peakShare;
+        /**
+         * The highest power is less than a main lobe width (60 / duration in bpm, about 5 bpm
+         * for the full measurement) from the lowest or highest heart rate searched. Such a
+         * "peak" is usually the flank of something outside the range, mostly slow drift (Nokia
+         * X30, 2026-11-04: 30-32 bpm, result 32.8) or an exposure ramp at the start (05:38).
+         * In effect, the lowest pulse that can be measured is about 35 bpm.
+         */
+        final boolean peakAtRangeEdge;
         /** Time span covered by the measurements, in seconds. */
         final double durationSeconds;
 
-        Result(double bpm, double peakPower, double durationSeconds) {
+        Result(double bpm, double peakPower, double peakShare, boolean peakAtRangeEdge, double durationSeconds) {
             this.bpm = bpm;
             this.peakPower = peakPower;
+            this.peakShare = peakShare;
+            this.peakAtRangeEdge = peakAtRangeEdge;
             this.durationSeconds = durationSeconds;
+        }
+
+        /** Whether a full-length measurement shows a clear pulse, see {@link #MIN_PEAK_SHARE}. */
+        boolean isClearPulse() {
+            return !peakAtRangeEdge && peakShare >= MIN_PEAK_SHARE;
         }
     }
 
@@ -74,18 +107,38 @@ class PulseEstimator {
         if (!(sumOfSquares > 0)) return null;
 
         final int frequencyCount = (int) Math.round((MAX_BPM - MIN_BPM) / STEP_BPM) + 1;
-        double bestBpm = MIN_BPM;
-        double bestPower = -1;
+        double[] powers = new double[frequencyCount];
+        int best = 0;
         for (int k = 0; k < frequencyCount; k++) {
-            double bpm = MIN_BPM + k * STEP_BPM;
-            double power = lombScargle(t, y, 2 * Math.PI * bpm / 60.0);
-            if (power > bestPower) {
-                bestPower = power;
-                bestBpm = bpm;
+            powers[k] = lombScargle(t, y, 2 * Math.PI * bpmAt(k) / 60.0);
+            if (powers[k] > powers[best]) best = k;
+        }
+        double bestBpm = bpmAt(best);
+
+        double total = 0, inPeakBands = 0;
+        for (int k = 0; k < frequencyCount; k++) {
+            total += powers[k];
+            double bpm = bpmAt(k);
+            for (int harmonic = 1; harmonic <= 3; harmonic++) {
+                if (Math.abs(bpm - harmonic * bestBpm) <= PEAK_BAND_BPM + 1e-9) {
+                    inPeakBands += powers[k];
+                    break;
+                }
             }
         }
 
-        return new Result(bestBpm, 2 * bestPower / sumOfSquares, t[n - 1]);
+        return new Result(bestBpm, 2 * powers[best] / sumOfSquares, inPeakBands / total,
+                isNearRangeEdge(bestBpm, t[n - 1]), t[n - 1]);
+    }
+
+    /** See {@link Result#peakAtRangeEdge}. */
+    static boolean isNearRangeEdge(double bpm, double durationSeconds) {
+        double mainLobeBpm = 60 / durationSeconds;
+        return bpm < MIN_BPM + mainLobeBpm || bpm > MAX_BPM - mainLobeBpm;
+    }
+
+    private static double bpmAt(int k) {
+        return MIN_BPM + k * STEP_BPM;
     }
 
     /**

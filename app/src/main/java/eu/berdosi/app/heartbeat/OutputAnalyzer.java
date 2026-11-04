@@ -236,9 +236,10 @@ class OutputAnalyzer {
         long startNs = System.nanoTime();
         PulseEstimator.Result pulse = PulseEstimator.estimate(values);
         Log.d("finger", String.format(Locale.ROOT, "live estimate %s after %d ms, took %.1f ms",
-                pulse == null ? "-" : String.format(Locale.ROOT, "%.1f bpm, peak power %.2f", pulse.bpm, pulse.peakPower),
-                measuredMs, (System.nanoTime() - startNs) / 1e6));
-        if (pulse == null) return;
+                pulse == null ? "-" : describe(pulse), measuredMs, (System.nanoTime() - startNs) / 1e6));
+        // no peak, e.g. slow drift: rather no estimate than a wrong one. The peak share is not
+        // checked, it is too low for good signals in the short windows.
+        if (pulse == null || pulse.peakAtRangeEdge) return;
         sendMessage(MainActivity.MESSAGE_UPDATE_REALTIME, String.format(
                 Locale.getDefault(),
                 activity.getString(R.string.status_live_estimate),
@@ -263,12 +264,16 @@ class OutputAnalyzer {
             return;
         }
 
-        String currentValue = String.format(
-                Locale.getDefault(),
-                activity.getString(R.string.pulse_output_template),
-                pulse.bpm,
-                pulse.durationSeconds);
-        Log.d("finger", String.format(Locale.ROOT, "result %.1f bpm, peak power %.2f", pulse.bpm, pulse.peakPower));
+        // Without a clear pulse, no number: a wrong pulse looks just as credible as a right one.
+        // The estimate is still in the export, for working on the algorithm.
+        String currentValue = pulse.isClearPulse()
+                ? String.format(
+                    Locale.getDefault(),
+                    activity.getString(R.string.pulse_output_template),
+                    pulse.bpm,
+                    pulse.durationSeconds)
+                : activity.getString(R.string.status_no_clear_pulse);
+        Log.d("finger", "result " + describe(pulse));
 
         sendMessage(MainActivity.MESSAGE_UPDATE_REALTIME, currentValue);
 
@@ -276,6 +281,11 @@ class OutputAnalyzer {
         returnValueSb.append(currentValue);
         returnValueSb.append(activity.getString(R.string.row_separator));
 
+        returnValueSb.append(String.format(
+                Locale.getDefault(),
+                activity.getString(R.string.estimate_details_template),
+                pulse.bpm, pulse.peakShare, pulse.peakPower, pulse.peakAtRangeEdge));
+        returnValueSb.append(activity.getString(R.string.row_separator));
         returnValueSb.append(String.format(
                 Locale.getDefault(),
                 activity.getString(R.string.color_at_start_template),
@@ -304,6 +314,13 @@ class OutputAnalyzer {
         sendMessage(MainActivity.MESSAGE_UPDATE_FINAL, returnValueSb.toString());
 
         cameraService.stop();
+    }
+
+    private static String describe(PulseEstimator.Result pulse) {
+        return String.format(Locale.ROOT, "%.1f bpm, peak power %.2f, peak share %.2f%s%s",
+                pulse.bpm, pulse.peakPower, pulse.peakShare,
+                pulse.peakAtRangeEdge ? ", peak at range edge" : "",
+                pulse.isClearPulse() ? "" : ", no clear pulse");
     }
 
     void stop() {
