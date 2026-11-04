@@ -23,11 +23,11 @@ class PulseEstimator {
     static final int MIN_SAMPLES = 20;
 
     /**
-     * Below this {@link Result#peakShare}, the full-length measurement shows no clear pulse.
-     * On the recordings: clear pulses 0.47-0.82, the bad take of 2026-10-21 23:48 0.08, the
-     * same signals shuffled in time (noise with the same values) at most 0.34. Only valid for
-     * the full measurement (about 11 s): in shorter windows the peak is wider than the band
-     * counted as the peak, and good signals score lower (0.28-0.32 after 3 s).
+     * Below this {@link Result#peakShare}, a measurement of 10 s shows no clear pulse. On the
+     * first 10 s of the recordings: clear pulses 0.41-0.78 (lowest: 05:38, exposure ramp at the
+     * start), the bad take of 2026-10-21 23:48 0.08; the same signals shuffled in time (noise with
+     * the same values) at most 0.38. Depends on the duration: the peak is wider in shorter
+     * measurements, so good signals score lower (0.32-0.50 after 5 s, 0.28-0.32 after 3 s).
      */
     static final double MIN_PEAK_SHARE = 0.4;
     /** Half the width of the band counted as the peak, and as each harmonic, in bpm. */
@@ -52,11 +52,11 @@ class PulseEstimator {
          */
         final double peakShare;
         /**
-         * The highest power is less than a main lobe width (60 / duration in bpm, about 5 bpm
-         * for the full measurement) from the lowest or highest heart rate searched. Such a
+         * The highest power is less than a main lobe width (60 / duration in bpm, 6 bpm
+         * for a 10 s measurement) from the lowest or highest heart rate searched. Such a
          * "peak" is usually the flank of something outside the range, mostly slow drift (Nokia
          * X30, 2026-11-04: 30-32 bpm, result 32.8) or an exposure ramp at the start (05:38).
-         * In effect, the lowest pulse that can be measured is about 35 bpm.
+         * In effect, the lowest pulse that can be measured is about 36 bpm in 10 s.
          */
         final boolean peakAtRangeEdge;
         /** Time span covered by the measurements, in seconds. */
@@ -70,7 +70,7 @@ class PulseEstimator {
             this.durationSeconds = durationSeconds;
         }
 
-        /** Whether a full-length measurement shows a clear pulse, see {@link #MIN_PEAK_SHARE}. */
+        /** Whether a 10 s measurement shows a clear pulse, see {@link #MIN_PEAK_SHARE}. */
         boolean isClearPulse() {
             return !peakAtRangeEdge && peakShare >= MIN_PEAK_SHARE;
         }

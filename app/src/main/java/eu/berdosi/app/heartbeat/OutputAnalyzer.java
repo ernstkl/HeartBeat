@@ -33,7 +33,9 @@ class OutputAnalyzer {
     // once the camera reports the exposure locked, frames already in the pipeline may still change
     private final long exposureLockSettleMs = 500;
     // length of the measured signal
-    private final long measuringMs = 11500;
+    // On the recordings, 10 s are within 0.6 bpm of the 11.5 s measured before (5 s: up to
+    // 2.8 bpm off). The clear pulse threshold in PulseEstimator is set for this length.
+    private final long measuringMs = 10000;
     // give up if no finger is detected within this time
     private final long maxWaitMs = 60000;
     // live estimate during the measurement: from this much data on, then once per interval.

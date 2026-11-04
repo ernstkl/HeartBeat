@@ -196,8 +196,34 @@ public class PulseEstimatorTest {
         assertFalse(result.isClearPulse());
     }
 
-    /** Reads "timestamp in ms,value" lines from a test resource and runs the estimator. */
+    /**
+     * The app measures 10 s; the recordings are 11-11.5 s long. Their first 10 s give the same
+     * pulse within 0.6 bpm, and are a clear pulse except for the bad take 23:48.
+     */
+    @Test
+    public void firstTenSecondsOfRecordings() throws Exception {
+        String[] recordings = {"log-2024-05-07.csv", "log-2026-10-21-2336.csv", "log-2026-10-21-2349.csv",
+                "log-2026-10-21-2355.csv", "log-2026-10-22-0024.csv", "log-2026-10-22-0538.csv",
+                "log-2026-10-22-0546.csv"};
+        for (String recording : recordings) {
+            PulseEstimator.Result full = estimateFromCsv(recording, Long.MAX_VALUE);
+            PulseEstimator.Result first = estimateFromCsv(recording, 10_000);
+            assertNotNull(recording, first);
+            assertEquals(recording, full.bpm, first.bpm, 0.6 + 1e-6);
+            assertTrue(recording, first.isClearPulse());
+        }
+        assertFalse(estimateFromCsv("log-2026-10-21-2348.csv", 10_000).isClearPulse());
+    }
+
     private PulseEstimator.Result estimateFromCsv(String resourceName) throws Exception {
+        return estimateFromCsv(resourceName, Long.MAX_VALUE);
+    }
+
+    /**
+     * Reads "timestamp in ms,value" lines from a test resource and runs the estimator on the
+     * first durationMs of them.
+     */
+    private PulseEstimator.Result estimateFromCsv(String resourceName, long durationMs) throws Exception {
         List<Long> timestamps = new ArrayList<>();
         List<Float> values = new ArrayList<>();
         try (InputStream in = getClass().getClassLoader().getResourceAsStream(resourceName)) {
@@ -206,7 +232,9 @@ public class PulseEstimatorTest {
             String line;
             while ((line = reader.readLine()) != null) {
                 String[] fields = line.split(",");
-                timestamps.add(Long.parseLong(fields[0]));
+                long timestamp = Long.parseLong(fields[0]);
+                if (!timestamps.isEmpty() && timestamp - timestamps.get(0) > durationMs) break;
+                timestamps.add(timestamp);
                 values.add(Float.parseFloat(fields[1]));
             }
         }
