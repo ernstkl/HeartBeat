@@ -118,23 +118,35 @@ class CameraService {
         return candidateCameraIds;
     }
 
+    // upper bound for probing hidden camera IDs, in case a device answers for any ID
+    private static final int MAX_PROBED_CAMERA_ID = 15;
+
     private List<String> findCandidateCameraIds() {
         List<String> cameraIds = new ArrayList<>();
         CameraManager cameraManager = (CameraManager) activity.getSystemService(Context.CAMERA_SERVICE);
         try {
-            String[] allCameraIds = Objects.requireNonNull(cameraManager).getCameraIdList();
-            for (String id : allCameraIds) {
+            String[] listedCameraIds = Objects.requireNonNull(cameraManager).getCameraIdList();
+            for (String id : listedCameraIds) {
                 CameraCharacteristics characteristics = cameraManager.getCameraCharacteristics(id);
-                Integer facing = characteristics.get(CameraCharacteristics.LENS_FACING);
-                Boolean flash = characteristics.get(CameraCharacteristics.FLASH_INFO_AVAILABLE);
-                Log.d("camera", "camera " + id + ": facing " + facing + ", flash " + flash
-                        + ", focal lengths " + Arrays.toString(characteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)));
-                logPhysicalCameras(cameraManager, id, characteristics);
-                if (facing != null && facing == CameraCharacteristics.LENS_FACING_FRONT) continue;
-                if (!Boolean.TRUE.equals(flash)) continue;
-                cameraIds.add(id);
+                if (isCandidate(id, characteristics)) cameraIds.add(id);
             }
-            if (cameraIds.isEmpty() && allCameraIds.length > 0) cameraIds.add(allCameraIds[0]);
+            // Some phones (Nokia X30, Motorola Edge 60 Stylus) hide back cameras from
+            // getCameraIdList(), but open them by ID: try the IDs after the highest listed one,
+            // until one does not exist.
+            int highestId = highestNumericId(listedCameraIds);
+            if (highestId >= 0) {
+                for (int id = highestId + 1; id <= MAX_PROBED_CAMERA_ID; id++) {
+                    CameraCharacteristics characteristics;
+                    try {
+                        characteristics = cameraManager.getCameraCharacteristics(String.valueOf(id));
+                    } catch (IllegalArgumentException | CameraAccessException e) {
+                        Log.d("camera", "camera " + id + ": not available: " + e.getMessage());
+                        break;
+                    }
+                    if (isCandidate(id + " (hidden)", characteristics)) cameraIds.add(String.valueOf(id));
+                }
+            }
+            if (cameraIds.isEmpty() && listedCameraIds.length > 0) cameraIds.add(listedCameraIds[0]);
         } catch (CameraAccessException | NullPointerException e) {
             Log.e("camera", "No access to camera", e);
         }
@@ -142,31 +154,27 @@ class CameraService {
         return cameraIds;
     }
 
-    /**
-     * Logs the physical cameras behind a logical multi-camera (API 28+). Not used yet: on phones
-     * where the ultrawide etc. are only reachable this way, it shows whether choosing among them
-     * would be worth implementing.
-     */
-    private static void logPhysicalCameras(CameraManager cameraManager, String id, CameraCharacteristics characteristics) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return;
-        int[] capabilities = characteristics.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES);
-        boolean logical = false;
-        if (capabilities != null) {
-            for (int capability : capabilities) {
-                if (capability == CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_LOGICAL_MULTI_CAMERA) logical = true;
-            }
-        }
-        if (!logical) return;
-        for (String physicalId : characteristics.getPhysicalCameraIds()) {
+    /** Logs the camera and tells whether it faces away from the user and has a flash. */
+    private static boolean isCandidate(String description, CameraCharacteristics characteristics) {
+        Integer facing = characteristics.get(CameraCharacteristics.LENS_FACING);
+        Boolean flash = characteristics.get(CameraCharacteristics.FLASH_INFO_AVAILABLE);
+        Log.d("camera", "camera " + description + ": facing " + facing + ", flash " + flash
+                + ", focal lengths " + Arrays.toString(characteristics.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)));
+        if (facing != null && facing == CameraCharacteristics.LENS_FACING_FRONT) return false;
+        return Boolean.TRUE.equals(flash);
+    }
+
+    /** The highest of the IDs that are numbers, or -1 if none is. */
+    private static int highestNumericId(String[] ids) {
+        int highest = -1;
+        for (String id : ids) {
             try {
-                CameraCharacteristics physical = cameraManager.getCameraCharacteristics(physicalId);
-                Log.d("camera", "camera " + id + ": physical camera " + physicalId
-                        + ", flash " + physical.get(CameraCharacteristics.FLASH_INFO_AVAILABLE)
-                        + ", focal lengths " + Arrays.toString(physical.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)));
-            } catch (CameraAccessException | IllegalArgumentException e) {
-                Log.d("camera", "camera " + id + ": physical camera " + physicalId + ", no characteristics: " + e.getMessage());
+                highest = Math.max(highest, Integer.parseInt(id));
+            } catch (NumberFormatException e) {
+                // IDs are numbers on all known phones, but the API does not promise it
             }
         }
+        return highest;
     }
 
     private void open(String openedCameraId) {
