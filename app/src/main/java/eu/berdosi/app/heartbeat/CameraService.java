@@ -48,6 +48,15 @@ class CameraService {
         void onFrame(String cameraId, long timestampNs, float meanRed, float meanGreen, float meanBlue);
     }
 
+    /**
+     * Told on the main thread when a camera could not be opened. It has been closed and dropped
+     * from the {@link #getCandidateCameraIds() candidate cameras}; the listener picks the next
+     * one. Not called when none is left: then MESSAGE_CAMERA_NOT_AVAILABLE is sent instead.
+     */
+    interface CameraFailureListener {
+        void onCameraFailed(String cameraId);
+    }
+
     // frames are only averaged, so a small image is enough
     private static final int FRAME_MIN_PIXELS = 320 * 240;
 
@@ -65,6 +74,7 @@ class CameraService {
     private boolean exposureLockAvailable;
 
     private volatile FrameListener frameListener;
+    private CameraFailureListener cameraFailureListener;
 
     // latest camera state as reported in the capture results, for logging and export
     private volatile int aeState = -1;
@@ -80,6 +90,11 @@ class CameraService {
 
     void setFrameListener(FrameListener listener) {
         frameListener = listener;
+    }
+
+    /** Main thread only. */
+    void setCameraFailureListener(CameraFailureListener listener) {
+        cameraFailureListener = listener;
     }
 
     /** Starts the first of the {@link #getCandidateCameraIds() candidate cameras}. */
@@ -244,7 +259,7 @@ class CameraService {
 
                         @Override
                         public void onConfigureFailed(@NonNull CameraCaptureSession session) {
-                            Log.println(Log.ERROR, "camera", "Session configuration failed");
+                            if (reader == imageReader) dropCamera(openedCameraId, "session configuration failed");
                         }
                     };
 
@@ -261,21 +276,42 @@ class CameraService {
 
                 @Override
                 public void onDisconnected(@NonNull CameraDevice camera) {
+                    camera.close();
+                    if (reader == imageReader) dropCamera(openedCameraId, "disconnected");
                 }
 
                 @Override
                 public void onError(@NonNull CameraDevice camera, int error) {
+                    camera.close();
+                    if (reader == imageReader) dropCamera(openedCameraId, "error " + error);
                 }
             }, null);
-        } catch (CameraAccessException | SecurityException e) {
-            if (e.getMessage() != null) {
-                Log.println(Log.ERROR, "camera", e.getMessage());
-                handler.sendMessage(Message.obtain(
-                    handler,
-                    MainActivity.MESSAGE_CAMERA_NOT_AVAILABLE,
-                    e.getMessage()));
-            }
+        } catch (CameraAccessException | SecurityException | IllegalArgumentException | NullPointerException e) {
+            // cameras found by probing IDs may refuse to open, see findCandidateCameraIds()
+            dropCamera(openedCameraId, e.toString());
         }
+    }
+
+    /**
+     * Closes a camera that could not be opened or configured, drops it from the candidates and
+     * lets the failure listener pick another one. Main thread only.
+     */
+    private void dropCamera(String failedCameraId, String reason) {
+        Log.println(Log.ERROR, "camera", "camera " + failedCameraId + " failed, dropped: " + reason);
+        closeCamera();
+        List<String> cameraIds = getCandidateCameraIds();
+        cameraIds.remove(failedCameraId);
+        if (cameraIds.isEmpty()) {
+            handler.sendMessage(Message.obtain(
+                handler,
+                MainActivity.MESSAGE_CAMERA_NOT_AVAILABLE,
+                "No camera could be opened: " + reason));
+            return;
+        }
+        // posted, as start() can fail before the listener is set
+        handler.post(() -> {
+            if (cameraFailureListener != null) cameraFailureListener.onCameraFailed(failedCameraId);
+        });
     }
 
     /**

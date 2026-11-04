@@ -7,6 +7,7 @@ import android.util.Log;
 import android.view.TextureView;
 
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
 import java.util.List;
@@ -127,7 +128,8 @@ class OutputAnalyzer {
         this.cameraService = cameraService;
         store = new MeasureStore();
 
-        cameraIds = cameraService.getCandidateCameraIds();
+        // a copy: the camera service drops cameras that fail to open, see onCameraFailed()
+        cameraIds = new ArrayList<>(cameraService.getCandidateCameraIds());
         activeCameraId = cameraService.getCameraId();
         fingerScores = new float[cameraIds.size()];
         Arrays.fill(fingerScores, Float.NaN);
@@ -138,6 +140,7 @@ class OutputAnalyzer {
         }
 
         cameraService.setFrameListener(this::processFrame);
+        cameraService.setCameraFailureListener(this::onCameraFailed);
         mainHandler.postDelayed(timeout, maxWaitMs + measuringMs);
 
         activity.setViewState(MainActivity.VIEW_STATE.MEASUREMENT);
@@ -349,6 +352,33 @@ class OutputAnalyzer {
         switchCamera(nextCamera);
     }
 
+    /**
+     * Main thread: a camera could not be opened and is dropped. Choosing starts over with the
+     * remaining cameras; if the failed one was the active one, the first remaining one is opened.
+     */
+    private synchronized void onCameraFailed(String failedCameraId) {
+        if (state == State.FINISHED) return;
+        int index = cameraIds.indexOf(failedCameraId);
+        if (index < 0) return;
+        cameraIds.remove(index);
+        if (cameraIds.isEmpty()) return;
+        fingerScores = new float[cameraIds.size()];
+        Arrays.fill(fingerScores, Float.NaN);
+        probedSinceFinger = 0;
+        if (state == State.CHOOSING_CAMERA && cameraIds.size() == 1) {
+            state = State.WAITING_FOR_FINGER;
+        } else if (state != State.CHOOSING_CAMERA && state != null) {
+            // not expected: cameras that opened once do not fail later; measure from scratch
+            state = State.WAITING_FOR_FINGER;
+            store = new MeasureStore();
+        }
+        if (failedCameraId.equals(activeCameraId)) {
+            switchCamera(0);
+        } else if (index < probedCamera) {
+            probedCamera--;
+        }
+    }
+
     private void switchCamera(int index) {
         probedCamera = index;
         activeCameraId = cameraIds.get(index);
@@ -434,7 +464,10 @@ class OutputAnalyzer {
         synchronized (this) {
             state = State.FINISHED;
         }
-        if (cameraService != null) cameraService.setFrameListener(null);
+        if (cameraService != null) {
+            cameraService.setFrameListener(null);
+            cameraService.setCameraFailureListener(null);
+        }
     }
 
     void sendMessage(int what, Object message) {
