@@ -51,7 +51,10 @@ public class MainActivity extends Activity implements ActivityCompat.OnRequestPe
         SHOW_RESULTS
     }
 
-    private boolean justShared = false;
+    // A result (or "no finger") is on screen. Coming back to the app (after exporting, the screen
+    // going off, switching apps) must not replace it with a new measurement; that only starts
+    // when asked for. An interrupted measurement is restarted, it is lost anyway.
+    private boolean resultShown = false;
 
     @SuppressLint("HandlerLeak")
     private final Handler mainHandler = new Handler(Looper.getMainLooper()) {
@@ -65,6 +68,7 @@ public class MainActivity extends Activity implements ActivityCompat.OnRequestPe
 
             if (msg.what == MESSAGE_UPDATE_FINAL) {
                 ((EditText) findViewById(R.id.editText)).setText(msg.obj.toString());
+                resultShown = true;
 
                 // make sure menu items are enabled when it opens.
                 Menu appMenu = ((Toolbar) findViewById(R.id.toolbar)).getMenu();
@@ -94,8 +98,7 @@ public class MainActivity extends Activity implements ActivityCompat.OnRequestPe
         TextureView cameraTextureView = findViewById(R.id.textureView2);
         SurfaceTexture previewSurfaceTexture = cameraTextureView.getSurfaceTexture();
 
-        // justShared is set if one clicks the share button.
-        if ((previewSurfaceTexture != null) && !justShared) {
+        if ((previewSurfaceTexture != null) && !resultShown) {
             // this first appears when we close the application and switch back
             // - TextureView isn't quite ready at the first onResume.
             Surface previewSurface = new Surface(previewSurfaceTexture);
@@ -203,6 +206,7 @@ public class MainActivity extends Activity implements ActivityCompat.OnRequestPe
     }
 
     public void onClickNewMeasurement() {
+        resultShown = false;
         analyzer = new OutputAnalyzer(this, findViewById(R.id.graphTextureView), mainHandler);
 
         // clear prior results
@@ -229,13 +233,11 @@ public class MainActivity extends Activity implements ActivityCompat.OnRequestPe
 
     public void onClickExportResult(MenuItem item) {
         final Intent intent = getTextIntent((String) ((TextView) findViewById(R.id.textView)).getText());
-        justShared = true;
         startActivity(Intent.createChooser(intent, getString(R.string.send_output_to)));
     }
 
     public void onClickExportDetails(MenuItem item) {
         final Intent intent = getTextIntent(((EditText) findViewById(R.id.editText)).getText().toString());
-        justShared = true;
         startActivity(Intent.createChooser(intent, getString(R.string.send_output_to)));
     }
 
