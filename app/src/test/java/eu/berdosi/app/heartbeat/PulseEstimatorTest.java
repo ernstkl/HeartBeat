@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Random;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
@@ -28,6 +29,8 @@ public class PulseEstimatorTest {
 
         assertNotNull(result);
         assertEquals(57.8, result.bpm, 1e-6);
+        assertEquals(0.66, result.peakShare, 0.01);
+        assertTrue(result.isClearPulse());
         assertEquals(0.6256, result.peakPower, 1e-3);
         assertEquals(10.9, result.durationSeconds, 1e-6);
     }
@@ -44,6 +47,8 @@ public class PulseEstimatorTest {
 
         assertNotNull(result);
         assertEquals(56.8, result.bpm, 1e-6);
+        assertEquals(0.77, result.peakShare, 0.01);
+        assertTrue(result.isClearPulse());
         assertEquals(0.760, result.peakPower, 1e-3);
         assertEquals(11.057, result.durationSeconds, 1e-6);
     }
@@ -58,6 +63,8 @@ public class PulseEstimatorTest {
 
         assertNotNull(result);
         assertEquals(56.2, result.bpm, 1e-6);
+        assertEquals(0.73, result.peakShare, 0.01);
+        assertTrue(result.isClearPulse());
         assertEquals(0.566, result.peakPower, 1e-3);
     }
 
@@ -73,6 +80,8 @@ public class PulseEstimatorTest {
 
         assertNotNull(result);
         assertEquals(54.2, result.bpm, 1e-6);
+        assertEquals(0.72, result.peakShare, 0.01);
+        assertTrue(result.isClearPulse());
         assertEquals(0.584, result.peakPower, 1e-3);
     }
 
@@ -87,6 +96,8 @@ public class PulseEstimatorTest {
 
         assertNotNull(result);
         assertEquals(57.0, result.bpm, 1e-6);
+        assertEquals(0.82, result.peakShare, 0.01);
+        assertTrue(result.isClearPulse());
         assertEquals(0.809, result.peakPower, 1e-3);
     }
 
@@ -103,6 +114,8 @@ public class PulseEstimatorTest {
         assertNotNull(result);
         assertEquals(165.0, result.bpm, 1e-6);
         assertTrue(result.peakPower < 0.1);
+        assertEquals(0.08, result.peakShare, 0.01);
+        assertFalse(result.isClearPulse());
     }
 
     /**
@@ -118,7 +131,69 @@ public class PulseEstimatorTest {
 
         assertNotNull(result);
         assertEquals(66.8, result.bpm, 1e-6);
+        assertEquals(0.47, result.peakShare, 0.01);
+        assertTrue(result.isClearPulse());
         assertEquals(0.30, result.peakPower, 0.01);
+    }
+
+    /**
+     * 2026-10-22 05:46: a clear, steady pulse (74.8 bpm) with slow drift the quadratic does not
+     * remove: 62 % of the variance is below 30 bpm, so the peak power is only 0.21. The peak
+     * share does not count the drift: 0.60 (scipy agrees).
+     */
+    @Test
+    public void driftLowersPeakPowerButNotPeakShare() throws Exception {
+        PulseEstimator.Result result = estimateFromCsv("log-2026-10-22-0546.csv");
+
+        assertNotNull(result);
+        assertEquals(74.8, result.bpm, 1e-6);
+        assertEquals(0.21, result.peakPower, 0.01);
+        assertEquals(0.60, result.peakShare, 0.01);
+        assertTrue(result.isClearPulse());
+    }
+
+    /**
+     * Slow drift that the quadratic does not remove, and no pulse: the power keeps rising
+     * towards the lowest heart rate searched. Like the Nokia X30 measurement of 2026-11-04,
+     * whose live estimates said 30-32 bpm and the result 32.8 (no recording of it).
+     */
+    @Test
+    public void slowDriftWithoutPulseIsNoClearPulse() {
+        Random random = new Random(3);
+        int n = 230;
+        long[] t = new long[n];
+        float[] y = new float[n];
+        for (int i = 0; i < n; i++) {
+            t[i] = i * 50L;
+            double seconds = t[i] / 1000.0;
+            y[i] = (float) (Math.sin(2 * Math.PI * 0.2 * seconds) + 0.02 * random.nextGaussian());
+        }
+
+        PulseEstimator.Result result = PulseEstimator.estimate(t, y);
+
+        assertNotNull(result);
+        // not exactly at the edge: the drift leaves a flank with a small bump at 31 bpm
+        assertEquals(31.0, result.bpm, 1e-6);
+        assertTrue(result.peakAtRangeEdge);
+        assertFalse(result.isClearPulse());
+    }
+
+    /** White noise: some peak somewhere, but not a clear pulse. */
+    @Test
+    public void noiseIsNoClearPulse() {
+        Random random = new Random(11);
+        int n = 230;
+        long[] t = new long[n];
+        float[] y = new float[n];
+        for (int i = 0; i < n; i++) {
+            t[i] = i * 50L;
+            y[i] = (float) random.nextGaussian();
+        }
+
+        PulseEstimator.Result result = PulseEstimator.estimate(t, y);
+
+        assertNotNull(result);
+        assertFalse(result.isClearPulse());
     }
 
     /** Reads "timestamp in ms,value" lines from a test resource and runs the estimator. */
@@ -165,6 +240,7 @@ public class PulseEstimatorTest {
         assertNotNull(result);
         assertEquals(trueBpm, result.bpm, PulseEstimator.STEP_BPM);
         assertTrue(result.peakPower > 0.8);
+        assertTrue(result.isClearPulse());
     }
 
     /** A strong slow drift (the finger warming, changing pressure) must not hide the pulse. */

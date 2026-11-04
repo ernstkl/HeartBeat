@@ -28,6 +28,8 @@
     <string name="status_hold_still">Finger detected - hold still…</string>
     <string name="status_measuring">Measuring…</string>
     <string name="status_live_estimate">Measuring… pulse about %1$.0f (%2$.0f of %3$.0f seconds)</string>
+    <string name="status_no_clear_pulse">No clear pulse found. Please measure again, keeping your finger still and pressing lightly.</string>
+    <string name="estimate_details_template">Estimate: %1$.1f bpm, peak share %2$.2f, peak power %3$.2f, peak at range edge: %4$b</string>
     <string name="status_no_finger">No finger detected on the camera.</string>
     <string name="color_at_start_template">Color at start (mean red, green, blue): %1$.0f, %2$.0f, %3$.0f</string>
     <string name="status_choosing_camera">Finger detected - hold still, choosing the camera…</string>
